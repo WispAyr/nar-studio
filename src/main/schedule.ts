@@ -1,6 +1,9 @@
 /**
- * NAR schedule poller — hits siphon.wispayr.online/api/nar/schedule
- * and /api/nar/current every 60s, pushes updates to renderer.
+ * NAR schedule poller — hits siphon.wispayr.online/api/nar/schedule every 60s.
+ *
+ * The schedule endpoint returns { data: { count, items: [...] } }; each item
+ * carries uid/name/broadcaststart/broadcastend. The currently-live and next
+ * shows are derived from those items by time, so they always have a uid.
  */
 import axios from 'axios'
 import { getMainWindow } from './index'
@@ -15,21 +18,13 @@ export interface NarShow {
   broadcaststart: string   // ISO 8601
   broadcastend: string
   thumbnail: string
-  tags: Array<{ name: string; slug: string }>
-}
-
-export interface NarCurrent {
-  uid: string
-  name: string
-  broadcaststart: string
-  broadcastend: string
-  thumbnail: string
-  stream_url: string
+  genres: string[]
+  timezone: string
 }
 
 export interface NarScheduleState {
   shows: NarShow[]
-  current: NarCurrent | null
+  current: NarShow | null
   next: NarShow | null
   fetchedAt: string
   stale: boolean
@@ -63,55 +58,36 @@ export class SchedulePoller {
 
   private async poll() {
     try {
-      const [schedRes, curRes] = await Promise.allSettled([
-        axios.get<{ data: { shows?: NarShow[] } | NarShow[]; stale: boolean; fetched_at: string }>(
-          `${SIPHON_BASE}/api/nar/schedule`,
-          { timeout: 10_000 }
-        ),
-        axios.get<{ data: NarCurrent; stale: boolean }>(
-          `${SIPHON_BASE}/api/nar/current`,
-          { timeout: 10_000 }
-        ),
-      ])
+      const res = await axios.get(`${SIPHON_BASE}/api/nar/schedule`, { timeout: 10_000 })
+      const body = res.data ?? {}
+      const items: NarShow[] = Array.isArray(body?.data?.items) ? body.data.items : []
+      const shows = items
+        .slice()
+        .sort((a, b) => new Date(a.broadcaststart).getTime() - new Date(b.broadcaststart).getTime())
 
       const now = new Date()
-      let shows: NarShow[] = []
-      let stale = false
-      let fetchedAt = now.toISOString()
-
-      if (schedRes.status === 'fulfilled') {
-        const body = schedRes.value.data
-        const raw = Array.isArray(body.data) ? body.data : (body.data as any)?.shows ?? []
-        shows = (raw as NarShow[]).sort(
-          (a, b) => new Date(a.broadcaststart).getTime() - new Date(b.broadcaststart).getTime()
-        )
-        stale = body.stale
-        fetchedAt = body.fetched_at ?? fetchedAt
-      }
-
-      let current: NarCurrent | null = null
-      if (curRes.status === 'fulfilled') {
-        current = curRes.value.data.data ?? null
-      }
-
-      // Derive "next" from schedule
+      const current = shows.find(s =>
+        now >= new Date(s.broadcaststart) && now < new Date(s.broadcastend)) ?? null
       const next = shows.find(s => new Date(s.broadcaststart) > now) ?? null
 
-      this.state = { shows, current, next, fetchedAt, stale }
+      this.state = {
+        shows,
+        current,
+        next,
+        fetchedAt: body?.fetched_at ?? now.toISOString(),
+        stale: !!body?.stale,
+      }
       this.emit('schedule:updated', this.state)
     } catch (e) {
-      console.error('[schedule] poll failed:', e)
+      console.error('[schedule] poll failed:', (e as Error).message)
     }
   }
 
-  /** Find the show that should be recording now (for auto-record). */
+  /** The show that should be recording now — recomputed against the clock. */
   getCurrentShow(): NarShow | null {
     const now = new Date()
-    return this.state.shows.find(s => {
-      const start = new Date(s.broadcaststart)
-      const end = new Date(s.broadcastend)
-      return now >= start && now < end
-    }) ?? null
+    return this.state.shows.find(s =>
+      now >= new Date(s.broadcaststart) && now < new Date(s.broadcastend)) ?? null
   }
 
   /** Slug-safe show identifier for folder naming. */

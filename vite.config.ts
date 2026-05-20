@@ -10,17 +10,23 @@ export default defineConfig({
     electron([
       {
         entry: 'src/main/index.ts',
+        onstart(args) {
+          args.startup()
+        },
         vite: {
           build: {
             outDir: 'dist-electron/main',
             rollupOptions: {
-              external: ['electron', 'node-hid', 'electron-store'],
+              external: ['electron', 'node-hid', 'electron-store', 'ffmpeg-static'],
             },
           },
         },
       },
       {
         entry: 'src/preload/index.ts',
+        onstart(args) {
+          args.reload()
+        },
         vite: {
           build: {
             outDir: 'dist-electron/preload',

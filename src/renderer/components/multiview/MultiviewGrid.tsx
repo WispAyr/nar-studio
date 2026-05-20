@@ -1,20 +1,7 @@
-import { useState } from 'react'
 import { CameraPreview } from './CameraPreview'
+import { useCameraStreams } from '../../camera/CameraStreamProvider'
+import { useEngine } from '../../engine/EngineProvider'
 import { useCameras } from '../../hooks/useCameras'
-import { useOBS } from '../../hooks/useOBS'
-
-const SCENE_MAP = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
-
-// Placeholder cameras when no HID devices are connected
-const PLACEHOLDER_CAMERAS = [0, 1, 2, 3].map(i => ({
-  index: i,
-  path: '',
-  serialNumber: '',
-  label: `Camera ${i + 1}`,
-  connected: false,
-  aiTracking: false,
-  currentPreset: null,
-}))
 
 interface Props {
   selectedCamera: number
@@ -22,26 +9,28 @@ interface Props {
 }
 
 export function MultiviewGrid({ selectedCamera, onSelectCamera }: Props) {
+  const { streams, sources } = useCameraStreams()
+  const { programSource, cut } = useEngine()
   const { cameras: hidCameras } = useCameras()
-  const { programScene, cutTo } = useOBS()
-
-  const cameras = PLACEHOLDER_CAMERAS.map((placeholder, i) =>
-    hidCameras[i] ?? placeholder
-  )
 
   return (
-    <div className="grid grid-cols-2 grid-rows-2 gap-1.5 p-1.5 h-full" style={{ gridAutoRows: '1fr' }}>
-      {cameras.map((cam, i) => (
-        <CameraPreview
-          key={i}
-          index={i}
-          camera={cam}
-          isProgram={programScene === SCENE_MAP[i]}
-          isSelected={selectedCamera === i}
-          onClick={() => onSelectCamera(i)}
-          onCut={() => cutTo(SCENE_MAP[i])}
-        />
-      ))}
+    <div className="grid grid-cols-2 grid-rows-2 gap-1.5 h-full" style={{ gridAutoRows: '1fr' }}>
+      {[0, 1, 2, 3].map(i => {
+        const src = sources.find(s => s.index === i)
+        return (
+          <CameraPreview
+            key={i}
+            label={`CAM ${i + 1}`}
+            stream={streams[i]}
+            hasSignal={src?.hasSignal ?? false}
+            isProgram={programSource === `cam${i}`}
+            isSelected={selectedCamera === i}
+            aiTracking={hidCameras[i]?.aiTracking ?? false}
+            onClick={() => onSelectCamera(i)}
+            onCut={() => cut(`cam${i}`)}
+          />
+        )
+      })}
     </div>
   )
 }

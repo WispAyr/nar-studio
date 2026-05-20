@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useOBS } from '../../hooks/useOBS'
+import { useEngine } from '../../engine/EngineProvider'
 
 const studio = (window as any).studio
 
@@ -13,11 +13,15 @@ interface StreamProfile {
 
 const PLATFORM_LABELS = { youtube: 'YT', twitch: 'TW', custom: '⚡' }
 
+const pad = (n: number) => String(n).padStart(2, '0')
+
 export function StreamPanel() {
-  const { streaming, streamTimecode } = useOBS()
+  const { engineId, streaming, streamTimecode, streamStartedAt, startStream, stopStream } = useEngine()
   const [profiles, setProfiles] = useState<StreamProfile[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<StreamProfile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState('')
 
   useEffect(() => {
     const load = async () => {
@@ -31,8 +35,40 @@ export function StreamPanel() {
     load()
   }, [])
 
-  const startStream = () => studio?.startStream?.(activeId ?? undefined)
-  const stopStream = () => studio?.stopStream?.()
+  // Built-in stream elapsed timer
+  useEffect(() => {
+    if (!streamStartedAt) { setElapsed(''); return }
+    const tick = () => {
+      const ms = Date.now() - streamStartedAt
+      const h = Math.floor(ms / 3_600_000)
+      const m = Math.floor((ms % 3_600_000) / 60_000)
+      const s = Math.floor((ms % 60_000) / 1000)
+      setElapsed(`${pad(h)}:${pad(m)}:${pad(s)}`)
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [streamStartedAt])
+
+  const goLive = async () => {
+    setError(null)
+    const profile = profiles.find(p => p.id === activeId)
+    if (engineId === 'builtin') {
+      if (!profile) { setError('Select a stream profile'); return }
+      try {
+        await startStream(profile.rtmpUrl, profile.streamKey)
+      } catch (e) {
+        setError((e as Error).message)
+      }
+    } else {
+      studio?.startStream?.(activeId ?? undefined)
+    }
+  }
+
+  const endStream = () => {
+    if (engineId === 'builtin') stopStream()
+    else studio?.stopStream?.()
+  }
 
   const saveProfile = async (p: StreamProfile) => {
     await studio?.saveStreamProfile?.(p)
@@ -48,10 +84,14 @@ export function StreamPanel() {
     platform: 'youtube',
   })
 
+  const timecode = engineId === 'builtin' ? elapsed : (streamTimecode ?? '')
+
   return (
     <div className="flex flex-col gap-2 p-3 h-full overflow-y-auto">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-500 uppercase tracking-wider">Stream</span>
+        <span className="text-xs text-slate-500 uppercase tracking-wider">
+          Stream — {engineId === 'builtin' ? 'Built-in' : 'OBS'}
+        </span>
         <button onClick={newProfile} className="text-xs text-slate-500 hover:text-slate-300">+ Add</button>
       </div>
 
@@ -61,10 +101,10 @@ export function StreamPanel() {
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-nar-red animate-pulse" />
             <span className="text-xs font-bold text-nar-red">LIVE</span>
-            <span className="text-xs font-mono text-slate-400 tabular-nums">{streamTimecode ?? ''}</span>
+            <span className="text-xs font-mono text-slate-400 tabular-nums">{timecode}</span>
           </div>
           <button
-            onClick={stopStream}
+            onClick={endStream}
             className="text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
           >
             End Stream
@@ -72,13 +112,14 @@ export function StreamPanel() {
         </div>
       ) : (
         <button
-          onClick={startStream}
+          onClick={goLive}
           disabled={!activeId}
           className="text-xs bg-nar-red hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
         >
           ▶ Go Live
         </button>
       )}
+      {error && <span className="text-xs text-nar-red">{error}</span>}
 
       {/* Profile list */}
       <div className="flex flex-col gap-1">

@@ -7,21 +7,13 @@ export interface NarShow {
   broadcaststart: string
   broadcastend: string
   thumbnail: string
-  tags: Array<{ name: string; slug: string }>
-}
-
-export interface NarCurrent {
-  uid: string
-  name: string
-  broadcaststart: string
-  broadcastend: string
-  thumbnail: string
-  stream_url: string
+  genres: string[]
+  timezone: string
 }
 
 export interface ScheduleState {
   shows: NarShow[]
-  current: NarCurrent | null
+  current: NarShow | null
   next: NarShow | null
   fetchedAt: string
   stale: boolean
@@ -40,7 +32,7 @@ export function useSchedule() {
     return () => unsub?.()
   }, [])
 
-  // Progress within current show 0–1
+  // Progress within the current show, 0–1
   const progress = (() => {
     if (!state.current) return 0
     const start = new Date(state.current.broadcaststart).getTime()
@@ -49,7 +41,7 @@ export function useSchedule() {
     return Math.max(0, Math.min(1, (now - start) / (end - start)))
   })()
 
-  // Countdown to next show
+  // Countdown to the next show
   const nextIn = (() => {
     if (!state.next) return null
     const ms = new Date(state.next.broadcaststart).getTime() - Date.now()

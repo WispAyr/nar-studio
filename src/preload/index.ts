@@ -49,6 +49,21 @@ contextBridge.exposeInMainWorld('studio', {
   setRecordingDir: (dir: string) => invoke('recording:set-dir', { dir }),
   onRecordingSession: (cb: (s: any) => void) => on('recording:session', cb),
 
+  // Built-in engine recording
+  builtinRecStart: (show: unknown, ext: string) => invoke('builtin-rec:start', { show, ext }),
+  builtinRecWrite: (id: string, chunk: ArrayBuffer) => invoke('builtin-rec:write', { id, chunk }),
+  builtinRecStop: () => invoke('builtin-rec:stop'),
+
+  // Built-in engine streaming
+  builtinStreamStart: (rtmpUrl: string, streamKey: string) => invoke('builtin-stream:start', { rtmpUrl, streamKey }),
+  builtinStreamWrite: (chunk: ArrayBuffer) => invoke('builtin-stream:write', { chunk }),
+  builtinStreamStop: () => invoke('builtin-stream:stop'),
+
+  // CG asset library
+  cgList: () => invoke('cg:list'),
+  cgOpenFolder: (category?: string) => invoke('cg:open-folder', { category }),
+  onCgChanged: (cb: () => void) => on('cg:changed', cb),
+
   // Audio
   setAudioDevice: (deviceId: string) => invoke('audio:set-device', { deviceId }),
 

@@ -1,10 +1,18 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, session, protocol, net } from 'electron'
 import path from 'path'
+import { pathToFileURL } from 'url'
 import { registerIpcHandlers } from './ipc'
 import { obsManager } from './obs'
 import { hidManager } from './hid'
 import { schedulePoller } from './schedule'
 import { recordingManager } from './recording'
+import { cgAssets } from './cgAssets'
+
+// The cg:// scheme serves CG assets to the renderer; privileged so assets
+// drawn onto the program canvas don't taint it (recording needs captureStream).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'cg', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -32,6 +40,9 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
+    mainWindow.webContents.on('console-message', (_e, _level, message) => {
+      console.log('[renderer]', message)
+    })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'))
   }
@@ -40,7 +51,21 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Local studio app — grant camera / microphone / display-capture requests.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(true))
+  session.defaultSession.setPermissionCheckHandler(() => true)
+
+  cgAssets.init()
+  protocol.handle('cg', request => {
+    const url = new URL(request.url)
+    const file = cgAssets.resolve(url.hostname, decodeURIComponent(url.pathname.replace(/^\//, '')))
+    return file
+      ? net.fetch(pathToFileURL(file).toString())
+      : new Response('Not found', { status: 404 })
+  })
+
   createWindow()
+  cgAssets.watch(() => mainWindow?.webContents.send('cg:changed'))
   registerIpcHandlers(ipcMain)
 
   // Start background services

@@ -1,28 +1,39 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ScheduleBanner } from './components/schedule/ScheduleBanner'
 import { AudioPanel } from './components/audio/AudioPanel'
+import { ProgramMonitor } from './components/program/ProgramMonitor'
 import { MultiviewGrid } from './components/multiview/MultiviewGrid'
 import { CameraControls } from './components/cameras/CameraControls'
 import { RecordingPanel } from './components/recording/RecordingPanel'
 import { StreamPanel } from './components/stream/StreamPanel'
 import { VideoRouter } from './components/router/VideoRouter'
 import { StatusBar } from './components/layout/StatusBar'
-import { useCameras } from './hooks/useCameras'
+import { CameraStreamProvider } from './camera/CameraStreamProvider'
+import { EngineProvider } from './engine/EngineProvider'
 
 type RightTab = 'router' | 'stream' | 'recording'
 
 export default function App() {
-  const [selectedCamera, setSelectedCamera] = useState(0)
-  const [rightTab, setRightTab] = useState<RightTab>('router')
-  const { cameras } = useCameras()
+  return (
+    <CameraStreamProvider>
+      <EngineProvider>
+        <AppInner />
+      </EngineProvider>
+    </CameraStreamProvider>
+  )
+}
 
-  // Always have a camera object — use placeholder if HID not yet connected
-  const PLACEHOLDER = {
-    index: selectedCamera, path: '', serialNumber: '',
-    label: `Camera ${selectedCamera + 1}`, connected: false,
-    aiTracking: false, currentPreset: null,
-  }
-  const selectedCam = cameras[selectedCamera] ?? PLACEHOLDER
+function AppInner() {
+  const [selectedCamera, setSelectedCamera] = useState(() => {
+    const v = Number(localStorage.getItem('nar-selected-camera'))
+    return v >= 0 && v <= 3 ? v : 0
+  })
+  const [rightTab, setRightTab] = useState<RightTab>(
+    () => (localStorage.getItem('nar-right-tab') as RightTab) || 'router'
+  )
+
+  useEffect(() => { localStorage.setItem('nar-selected-camera', String(selectedCamera)) }, [selectedCamera])
+  useEffect(() => { localStorage.setItem('nar-right-tab', rightTab) }, [rightTab])
 
   return (
     <div className="flex flex-col h-screen bg-surface-950 overflow-hidden">
@@ -35,31 +46,34 @@ export default function App() {
       {/* Main area */}
       <div className="flex flex-1 min-h-0 gap-1 p-1">
 
-        {/* Left: 2×2 multiview */}
-        <div className="flex-1 min-w-0">
-          <MultiviewGrid
-            selectedCamera={selectedCamera}
-            onSelectCamera={setSelectedCamera}
-          />
+        {/* Left: program monitor + 2×2 multiview */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <div className="flex-[3] min-h-0">
+            <ProgramMonitor />
+          </div>
+          <div className="flex-[2] min-h-0">
+            <MultiviewGrid
+              selectedCamera={selectedCamera}
+              onSelectCamera={setSelectedCamera}
+            />
+          </div>
         </div>
 
         {/* Right sidebar */}
         <div className="w-72 flex flex-col gap-1 shrink-0">
 
           {/* Camera controls for selected camera */}
-          <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '260px' }}>
-            <div className="flex items-center gap-2 px-3 pt-2 pb-1 border-b border-surface-700">
+          <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '440px' }}>
+            <div className="flex items-center gap-2 px-3 pt-2 pb-1.5 border-b border-surface-700">
               <div className="w-1.5 h-1.5 rounded-full bg-nar-red" />
-              <span className="text-xs font-bold text-slate-300">
-                {cameras[selectedCamera]?.label ?? `Camera ${selectedCamera + 1}`}
-              </span>
+              <span className="text-xs font-bold text-slate-300">CAM {selectedCamera + 1}</span>
               {/* Camera selector tabs */}
-              <div className="flex gap-0.5 ml-auto">
+              <div className="flex gap-1 ml-auto">
                 {[0, 1, 2, 3].map(i => (
                   <button
                     key={i}
                     onClick={() => setSelectedCamera(i)}
-                    className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                    className={`text-xs w-6 py-0.5 rounded transition-colors ${
                       selectedCamera === i
                         ? 'bg-nar-red text-white'
                         : 'bg-surface-700 text-slate-500 hover:text-slate-300'
@@ -70,8 +84,8 @@ export default function App() {
                 ))}
               </div>
             </div>
-            <div className="h-[calc(100%-32px)]">
-              <CameraControls camera={selectedCam} index={selectedCamera} />
+            <div className="h-[calc(100%-37px)]">
+              <CameraControls index={selectedCamera} />
             </div>
           </div>
 
