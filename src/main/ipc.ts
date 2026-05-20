@@ -1,0 +1,101 @@
+import { type IpcMain } from 'electron'
+import { hidManager } from './hid'
+import { obsManager } from './obs'
+import { schedulePoller } from './schedule'
+import { recordingManager } from './recording'
+import { streamManager } from './stream'
+
+export function registerIpcHandlers(ipc: IpcMain) {
+
+  // ── Schedule ──────────────────────────────────────────────────────────────
+  ipc.handle('schedule:get', () => schedulePoller.getState())
+
+  // ── Cameras / HID ─────────────────────────────────────────────────────────
+  ipc.handle('cameras:list', () => hidManager.getCameraList())
+
+  ipc.handle('camera:ptz', (_e, { index, direction, speed }) =>
+    hidManager.ptz(index, direction, speed))
+
+  ipc.handle('camera:zoom', (_e, { index, direction, speed }) =>
+    hidManager.zoom(index, direction, speed))
+
+  ipc.handle('camera:ai', (_e, { index, enabled }) =>
+    hidManager.setAiTracking(index, enabled))
+
+  ipc.handle('camera:tracking-mode', (_e, { index, mode }) =>
+    hidManager.setTrackingMode(index, mode))
+
+  ipc.handle('camera:preset-save', (_e, { index, slot }) =>
+    hidManager.savePreset(index, slot))
+
+  ipc.handle('camera:preset-goto', (_e, { index, slot }) =>
+    hidManager.gotoPreset(index, slot))
+
+  ipc.handle('camera:exposure', (_e, { index, mode, value }) =>
+    hidManager.setExposure(index, mode, value))
+
+  ipc.handle('camera:white-balance', (_e, { index, mode, kelvin }) =>
+    hidManager.setWhiteBalance(index, mode, kelvin))
+
+  ipc.handle('camera:reset-home', (_e, { index }) =>
+    hidManager.resetHome(index))
+
+  ipc.handle('camera:rename', (_e, { index, label }) =>
+    hidManager.renameCamera(index, label))
+
+  // ── OBS / Switching ───────────────────────────────────────────────────────
+  ipc.handle('obs:state', () => obsManager.getState())
+  ipc.handle('obs:connect', (_e, { password }) => obsManager.connect(password))
+  ipc.handle('obs:cut', (_e, { sceneName }) => obsManager.cutTo(sceneName))
+
+  // ── Recording ─────────────────────────────────────────────────────────────
+  ipc.handle('recording:session', () => recordingManager.getActiveSession())
+
+  ipc.handle('recording:start', (_e, { show }) =>
+    recordingManager.startSession(show, false))
+
+  ipc.handle('recording:stop', () => recordingManager.stopAll())
+
+  ipc.handle('recording:auto', (_e, { enabled }) =>
+    recordingManager.setAutoRecord(enabled))
+
+  ipc.handle('recording:set-dir', (_e, { dir }) =>
+    recordingManager.setBaseDir(dir))
+
+  // ── Audio ─────────────────────────────────────────────────────────────────
+  ipc.handle('audio:set-device', async (_e, { deviceId }) => {
+    const obs = obsManager.getObs()
+    if (!obsManager.getState().connected) return
+    // Add/update audio input capture source in OBS pointing to the selected device
+    // Disable audio on all video capture sources (camera mics)
+    try {
+      // Mute all camera video sources
+      for (const scene of ['CAM1', 'CAM2', 'CAM3', 'CAM4']) {
+        await obs.call('SetInputMute', { inputName: `Camera ${scene.slice(-1)}`, inputMuted: true }).catch(() => {})
+      }
+      // Create or update the main audio input source
+      await obs.call('CreateInput', {
+        sceneName: 'CAM1',
+        inputName: 'NAR Studio Feed',
+        inputKind: 'wasapi_input_capture',
+        inputSettings: { device_id: deviceId },
+      }).catch(async () => {
+        // Already exists — just update the device
+        await obs.call('SetInputSettings', {
+          inputName: 'NAR Studio Feed',
+          inputSettings: { device_id: deviceId },
+        }).catch(() => {})
+      })
+    } catch (e) {
+      console.error('[audio] OBS device set failed:', e)
+    }
+  })
+
+  // ── Streaming ─────────────────────────────────────────────────────────────
+  ipc.handle('stream:profiles', () => streamManager.getProfiles())
+  ipc.handle('stream:active-profile', () => streamManager.getActiveProfile())
+  ipc.handle('stream:save-profile', (_e, { profile }) => streamManager.saveProfile(profile))
+  ipc.handle('stream:delete-profile', (_e, { id }) => streamManager.deleteProfile(id))
+  ipc.handle('stream:start', (_e, { profileId }) => streamManager.startStream(profileId))
+  ipc.handle('stream:stop', () => streamManager.stopStream())
+}

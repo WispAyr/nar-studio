@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #070708;
+  color: #f1f5f9;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track { background: #0f0f12; }
+::-webkit-scrollbar-thumb { background: #2e2e3a; border-radius: 2px; }
+
+/* Program border pulse when recording */
+@keyframes rec-pulse {
+  0%, 100% { border-color: #e8003c; }
+  50% { border-color: #ff4466; }
+}
+.recording-border {
+  animation: rec-pulse 1.5s ease-in-out infinite;
+}
+
+/* Camera preview hover */
+.cam-preview:hover .cam-overlay { opacity: 1; }
+.cam-overlay { opacity: 0; transition: opacity 0.15s; }
+
+/* PTZ joystick */
+.ptz-btn {
+  @apply flex items-center justify-center w-8 h-8 rounded bg-surface-700 hover:bg-surface-600 active:bg-nar-red text-slate-300 hover:text-white transition-colors cursor-pointer select-none;
+}
