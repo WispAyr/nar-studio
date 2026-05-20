@@ -37,6 +37,7 @@ interface CamSettings {
   whiteBalanceMode: Mode
   kelvin: number
   focusMode: Mode
+  home: Preset | null
   presets: (Preset | null)[]
 }
 
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: CamSettings = {
   whiteBalanceMode: 'auto',
   kelvin: 5600,
   focusMode: 'auto',
+  home: null,
   presets: Array(PRESET_COUNT).fill(null),
 }
 
@@ -130,6 +132,17 @@ export function useCameraControl(index: number) {
     track.applyConstraints({ advanced: [adv] as MediaTrackConstraintSet[] }).catch(() => {})
   }, [track, index])
 
+  // A global-state recall moves cameras from outside this hook — keep the
+  // displayed PTZ in sync when this camera is targeted.
+  useEffect(() => {
+    const onPtz = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d && d.index === index) setPtz({ pan: d.pan, tilt: d.tilt, zoom: d.zoom })
+    }
+    window.addEventListener('nar:ptz', onPtz)
+    return () => window.removeEventListener('nar:ptz', onPtz)
+  }, [index])
+
   const stopMove = useCallback(() => {
     if (moveTimer.current) {
       clearInterval(moveTimer.current)
@@ -158,11 +171,29 @@ export function useCameraControl(index: number) {
 
   useEffect(() => () => stopMove(), [stopMove])
 
+  /** Recall this camera's home — its saved position, or the origin if none set. */
   const goHome = useCallback(() => {
-    const zoom = caps.zoom?.min ?? 0
-    setPtz({ pan: 0, tilt: 0, zoom })
-    applyAdv({ pan: 0, tilt: 0, zoom })
+    const h = settingsRef.current.home
+    const target = h
+      ? { pan: h.pan, tilt: h.tilt, zoom: h.zoom }
+      : { pan: 0, tilt: 0, zoom: caps.zoom?.min ?? 0 }
+    setPtz(target)
+    applyAdv(target)
   }, [caps, applyAdv])
+
+  /** Save the camera's current position as its home. */
+  const setHome = useCallback(() => {
+    if (!track) return
+    const s = (track.getSettings?.() ?? {}) as any
+    const cur = ptzRef.current
+    update({
+      home: {
+        pan: s.pan ?? cur.pan,
+        tilt: s.tilt ?? cur.tilt,
+        zoom: s.zoom ?? cur.zoom,
+      },
+    })
+  }, [track, update])
 
   const setZoom = useCallback((zoom: number) => {
     const z = clamp(zoom, caps.zoom)
@@ -215,6 +246,7 @@ export function useCameraControl(index: number) {
     available: !!track,
     caps,
     ptz,
+    home: settings.home,
     presets: settings.presets,
     invertPan: settings.invertPan,
     speed: settings.speed,
@@ -225,6 +257,7 @@ export function useCameraControl(index: number) {
     startMove,
     stopMove,
     goHome,
+    setHome,
     setZoom,
     savePreset,
     recallPreset,

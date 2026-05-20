@@ -7,11 +7,11 @@ interface Props {
   isProgram: boolean
   isSelected: boolean
   aiTracking?: boolean
-  onClick: () => void
+  peopleCount?: number
   onCut: () => void
 }
 
-export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected, aiTracking, onClick, onCut }: Props) {
+export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected, aiTracking, peopleCount, onCut }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -22,13 +22,14 @@ export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected,
   const borderClass = isProgram
     ? 'border-2 border-nar-red recording-border'
     : isSelected
-    ? 'border-2 border-nar-blue'
-    : 'border border-surface-600 hover:border-surface-500'
+    ? 'border-2 border-nar-blue hover:border-nar-red'
+    : 'border border-surface-600 hover:border-nar-red'
 
   return (
     <div
-      className={`relative bg-surface-900 rounded overflow-hidden cursor-pointer transition-all ${borderClass} cam-preview`}
-      onClick={onClick}
+      className={`group relative bg-surface-900 rounded overflow-hidden cursor-pointer transition-all ${borderClass}`}
+      onClick={onCut}
+      title={isProgram ? `${label} — on air` : `Cut ${label} to air`}
     >
       {hasSignal && stream ? (
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-contain bg-black" />
@@ -38,10 +39,24 @@ export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected,
         </div>
       )}
 
+      {/* The whole tile cuts to air on click — show the intent on hover */}
+      {!isProgram && (
+        <div className="absolute inset-0 flex items-center justify-center bg-nar-red/0 group-hover:bg-nar-red/20 transition-colors pointer-events-none">
+          <span className="text-sm font-bold uppercase tracking-widest text-white bg-nar-red px-3 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+            Cut
+          </span>
+        </div>
+      )}
+
       <div className="absolute inset-0 flex flex-col justify-between p-2 pointer-events-none">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold bg-black/60 px-1.5 py-0.5 rounded text-white">{label}</span>
           <div className="flex gap-1">
+            {!!peopleCount && (
+              <span className="text-xs bg-nar-green/80 text-black px-1.5 py-0.5 rounded font-bold tabular-nums">
+                {peopleCount} seen
+              </span>
+            )}
             {aiTracking && (
               <span className="text-xs bg-nar-green/80 text-black px-1.5 py-0.5 rounded font-bold">AI</span>
             )}
@@ -49,15 +64,6 @@ export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected,
               <span className="text-xs bg-nar-red text-white px-1.5 py-0.5 rounded font-bold animate-pulse">PGM</span>
             )}
           </div>
-        </div>
-
-        <div className="cam-overlay flex justify-center pb-1 pointer-events-auto">
-          <button
-            onClick={e => { e.stopPropagation(); onCut() }}
-            className="text-xs bg-nar-red hover:bg-red-600 text-white px-3 py-1 rounded font-bold uppercase tracking-wider transition-colors"
-          >
-            CUT
-          </button>
         </div>
       </div>
     </div>

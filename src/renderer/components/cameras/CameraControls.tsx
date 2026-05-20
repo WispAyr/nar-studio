@@ -92,7 +92,7 @@ export function CameraControls({ index }: Props) {
         </div>
       </section>
 
-      {/* Presets */}
+      {/* Presets — the ⌂ slot is this camera's home position */}
       <section className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between">
           <SectionLabel>Presets</SectionLabel>
@@ -105,7 +105,29 @@ export function CameraControls({ index }: Props) {
             {saveMode ? 'Tap a slot' : 'Save'}
           </button>
         </div>
-        <div className="grid grid-cols-6 gap-1">
+        <div className="grid grid-cols-7 gap-1">
+          <button
+            onClick={() => {
+              if (saveMode) { cam.setHome(); setSaveMode(false) }
+              else cam.goHome()
+            }}
+            title={
+              saveMode
+                ? 'Save current position as home'
+                : cam.home
+                ? 'Home — recall saved position'
+                : 'Home — recall default position'
+            }
+            className={`h-10 rounded text-base font-bold transition-colors ${
+              saveMode
+                ? 'bg-nar-amber/20 text-nar-amber border border-nar-amber/40'
+                : cam.home
+                ? 'bg-nar-blue/80 text-white hover:bg-nar-blue'
+                : 'bg-surface-700 text-slate-300 hover:bg-surface-600'
+            }`}
+          >
+            ⌂
+          </button>
           {Array.from({ length: PRESET_COUNT }, (_, slot) => {
             const isSet = !!cam.presets[slot]
             return (

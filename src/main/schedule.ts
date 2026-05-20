@@ -26,6 +26,8 @@ export interface NarScheduleState {
   shows: NarShow[]
   current: NarShow | null
   next: NarShow | null
+  /** Presenter of the live show (from /current's subtitle2), e.g. "with Amanda Jean". */
+  presenter: string | null
   fetchedAt: string
   stale: boolean
 }
@@ -36,6 +38,7 @@ export class SchedulePoller {
     shows: [],
     current: null,
     next: null,
+    presenter: null,
     fetchedAt: '',
     stale: false,
   }
@@ -58,25 +61,42 @@ export class SchedulePoller {
 
   private async poll() {
     try {
-      const res = await axios.get(`${SIPHON_BASE}/api/nar/schedule`, { timeout: 10_000 })
-      const body = res.data ?? {}
-      const items: NarShow[] = Array.isArray(body?.data?.items) ? body.data.items : []
-      const shows = items
-        .slice()
-        .sort((a, b) => new Date(a.broadcaststart).getTime() - new Date(b.broadcaststart).getTime())
+      const [schedRes, curRes] = await Promise.allSettled([
+        axios.get(`${SIPHON_BASE}/api/nar/schedule`, { timeout: 10_000 }),
+        axios.get(`${SIPHON_BASE}/api/nar/current`, { timeout: 10_000 }),
+      ])
 
       const now = new Date()
+      let shows: NarShow[] = []
+      let stale = false
+      let fetchedAt = now.toISOString()
+
+      if (schedRes.status === 'fulfilled') {
+        const body = schedRes.value.data ?? {}
+        const items: NarShow[] = Array.isArray(body?.data?.items) ? body.data.items : []
+        shows = items
+          .slice()
+          .sort((a, b) => new Date(a.broadcaststart).getTime() - new Date(b.broadcaststart).getTime())
+        stale = !!body?.stale
+        fetchedAt = body?.fetched_at ?? fetchedAt
+      } else {
+        console.error('[schedule] /schedule failed:', schedRes.reason?.message)
+      }
+
+      // The /current endpoint carries the presenter (subtitle2); the schedule
+      // items do not. The live show itself is still derived from the schedule.
+      let presenter: string | null = null
+      if (curRes.status === 'fulfilled') {
+        const cur = curRes.value.data?.data
+        const p = (cur?.subtitle2 || cur?.subtitle || '').trim()
+        presenter = p || null
+      }
+
       const current = shows.find(s =>
         now >= new Date(s.broadcaststart) && now < new Date(s.broadcastend)) ?? null
       const next = shows.find(s => new Date(s.broadcaststart) > now) ?? null
 
-      this.state = {
-        shows,
-        current,
-        next,
-        fetchedAt: body?.fetched_at ?? now.toISOString(),
-        stale: !!body?.stale,
-      }
+      this.state = { shows, current, next, presenter, fetchedAt, stale }
       this.emit('schedule:updated', this.state)
     } catch (e) {
       console.error('[schedule] poll failed:', (e as Error).message)

@@ -1,16 +1,17 @@
 import { CameraPreview } from './CameraPreview'
 import { useCameraStreams } from '../../camera/CameraStreamProvider'
 import { useEngine } from '../../engine/EngineProvider'
+import { useSceneAnalysis } from '../../ai/SceneAnalysisProvider'
 import { useCameras } from '../../hooks/useCameras'
 
 interface Props {
   selectedCamera: number
-  onSelectCamera: (index: number) => void
 }
 
-export function MultiviewGrid({ selectedCamera, onSelectCamera }: Props) {
+export function MultiviewGrid({ selectedCamera }: Props) {
   const { streams, sources } = useCameraStreams()
-  const { programSource, cut } = useEngine()
+  const { programCams, cut } = useEngine()
+  const { analysis } = useSceneAnalysis()
   const { cameras: hidCameras } = useCameras()
 
   return (
@@ -23,10 +24,10 @@ export function MultiviewGrid({ selectedCamera, onSelectCamera }: Props) {
             label={`CAM ${i + 1}`}
             stream={streams[i]}
             hasSignal={src?.hasSignal ?? false}
-            isProgram={programSource === `cam${i}`}
+            isProgram={programCams.includes(i)}
             isSelected={selectedCamera === i}
             aiTracking={hidCameras[i]?.aiTracking ?? false}
-            onClick={() => onSelectCamera(i)}
+            peopleCount={analysis[i]?.people ?? 0}
             onCut={() => cut(`cam${i}`)}
           />
         )

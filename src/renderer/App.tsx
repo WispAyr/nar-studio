@@ -8,17 +8,25 @@ import { RecordingPanel } from './components/recording/RecordingPanel'
 import { StreamPanel } from './components/stream/StreamPanel'
 import { VideoRouter } from './components/router/VideoRouter'
 import { StatusBar } from './components/layout/StatusBar'
+import { StudioStates } from './components/states/StudioStates'
 import { CameraStreamProvider } from './camera/CameraStreamProvider'
+import { SceneAnalysisProvider } from './ai/SceneAnalysisProvider'
+import { CGProvider } from './cg/CGProvider'
+import { CGPanel } from './components/cg/CGPanel'
 import { EngineProvider } from './engine/EngineProvider'
 
-type RightTab = 'router' | 'stream' | 'recording'
+type RightTab = 'router' | 'stream' | 'recording' | 'cg'
 
 export default function App() {
   return (
     <CameraStreamProvider>
-      <EngineProvider>
-        <AppInner />
-      </EngineProvider>
+      <SceneAnalysisProvider>
+        <CGProvider>
+          <EngineProvider>
+            <AppInner />
+          </EngineProvider>
+        </CGProvider>
+      </SceneAnalysisProvider>
     </CameraStreamProvider>
   )
 }
@@ -52,10 +60,7 @@ function AppInner() {
             <ProgramMonitor />
           </div>
           <div className="flex-[2] min-h-0">
-            <MultiviewGrid
-              selectedCamera={selectedCamera}
-              onSelectCamera={setSelectedCamera}
-            />
+            <MultiviewGrid selectedCamera={selectedCamera} />
           </div>
         </div>
 
@@ -89,6 +94,9 @@ function AppInner() {
             </div>
           </div>
 
+          {/* Global studio states — recall all camera positions at once */}
+          <StudioStates />
+
           {/* Tabbed lower panel: Router / Stream / Recording */}
           <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
             <div className="flex border-b border-surface-700 shrink-0">
@@ -96,6 +104,7 @@ function AppInner() {
                 { id: 'router', label: 'Router' },
                 { id: 'stream', label: 'Stream' },
                 { id: 'recording', label: 'Record' },
+                { id: 'cg', label: 'CG' },
               ] as { id: RightTab; label: string }[]).map(tab => (
                 <button
                   key={tab.id}
@@ -114,6 +123,7 @@ function AppInner() {
               {rightTab === 'router' && <VideoRouter />}
               {rightTab === 'stream' && <StreamPanel />}
               {rightTab === 'recording' && <RecordingPanel />}
+              {rightTab === 'cg' && <CGPanel />}
             </div>
           </div>
         </div>

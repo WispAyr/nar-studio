@@ -15,6 +15,7 @@ export interface ScheduleState {
   shows: NarShow[]
   current: NarShow | null
   next: NarShow | null
+  presenter: string | null
   fetchedAt: string
   stale: boolean
 }
@@ -23,7 +24,7 @@ const studio = (window as any).studio
 
 export function useSchedule() {
   const [state, setState] = useState<ScheduleState>({
-    shows: [], current: null, next: null, fetchedAt: '', stale: false,
+    shows: [], current: null, next: null, presenter: null, fetchedAt: '', stale: false,
   })
 
   useEffect(() => {
