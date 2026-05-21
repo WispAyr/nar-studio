@@ -9,6 +9,15 @@ export interface TitleData {
   clock: string
 }
 
+/** Bounding box of a rendered title bar — used to clip the reactive sheen. */
+export interface TitleRect {
+  x: number
+  y: number
+  w: number
+  h: number
+  r: number
+}
+
 // Now Ayrshire Radio brand palette.
 const PURPLE = '#2d1646'
 const AMBER = '#faa61a'
@@ -25,16 +34,18 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 /** Render a NAR-branded title onto a 1920×1080 transparent canvas. */
-export function drawTitle(canvas: HTMLCanvasElement, template: TitleTemplate, data: TitleData) {
+export function drawTitle(
+  canvas: HTMLCanvasElement, template: TitleTemplate, data: TitleData,
+): TitleRect | null {
   const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  if (!ctx) return null
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  if (template === 'show-lower-third') lowerThird(ctx, data)
-  else if (template === 'up-next') upNext(ctx, data)
-  else clock(ctx, data)
+  if (template === 'show-lower-third') return lowerThird(ctx, data)
+  if (template === 'up-next') return upNext(ctx, data)
+  return clock(ctx, data)
 }
 
-function lowerThird(ctx: CanvasRenderingContext2D, d: TitleData) {
+function lowerThird(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect {
   const title = (d.showName || 'NOW AYRSHIRE RADIO').toUpperCase()
   const sub = d.presenter || ''
   ctx.textBaseline = 'alphabetic'
@@ -76,9 +87,11 @@ function lowerThird(ctx: CanvasRenderingContext2D, d: TitleData) {
     ctx.font = '400 32px Poppins, sans-serif'
     ctx.fillText(sub, x + padL, y + 140)
   }
+
+  return { x, y, w: barW, h: barH, r: 12 }
 }
 
-function upNext(ctx: CanvasRenderingContext2D, d: TitleData) {
+function upNext(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect {
   const name = (d.nextName || '—').toUpperCase()
   const time = d.nextTime || ''
   ctx.textBaseline = 'alphabetic'
@@ -114,9 +127,11 @@ function upNext(ctx: CanvasRenderingContext2D, d: TitleData) {
   ctx.fillStyle = WHITE
   ctx.font = '700 38px Poppins, sans-serif'
   ctx.fillText(name, x + padL, y + 102)
+
+  return { x, y, w: barW, h: barH, r: 12 }
 }
 
-function clock(ctx: CanvasRenderingContext2D, d: TitleData) {
+function clock(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect {
   const t = d.clock || '--:--:--'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
@@ -146,4 +161,52 @@ function clock(ctx: CanvasRenderingContext2D, d: TitleData) {
   ctx.fillStyle = WHITE
   ctx.font = '700 44px Poppins, sans-serif'
   ctx.fillText(t, x + padX + dotGap, y + barH / 2 + 3)
+
+  return { x, y, w: barW, h: barH, r: 10 }
+}
+
+/**
+ * A subtle, broadcast-grade audio-reactive sheen drawn over a title bar:
+ * a slow specular sweep plus a few high-end-reactive sparkle motes. Clipped
+ * to the bar so it never bleeds onto the program. Kept deliberately gentle.
+ */
+export function drawSparkle(
+  ctx: CanvasRenderingContext2D, rect: TitleRect, time: number, treble: number, beat: number,
+) {
+  const { x, y, w, h, r } = rect
+  ctx.save()
+  roundRect(ctx, x, y, w, h, r)
+  ctx.clip()
+  ctx.globalCompositeOperation = 'screen'
+
+  // Specular sweep — one soft sheen crossing the bar roughly every 8s.
+  const phase = (time % 8) / 8
+  const band = 240
+  const cx = x - band + (w + band * 2) * phase
+  const sheen = 0.09 + beat * 0.10
+  const grad = ctx.createLinearGradient(cx - band, 0, cx + band, 0)
+  grad.addColorStop(0, 'rgba(255,255,255,0)')
+  grad.addColorStop(0.5, `rgba(255,255,255,${sheen.toFixed(3)})`)
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(x, y, w, h)
+
+  // Sparkle motes — a few fixed points that twinkle with the high end.
+  const innerW = Math.max(1, Math.floor(w - 52))
+  const innerH = Math.max(1, Math.floor(h - 36))
+  for (let i = 0; i < 5; i++) {
+    const sx = x + 26 + ((i * 1973) % innerW)
+    const sy = y + 18 + ((i * 911) % innerH)
+    const twinkle = 0.5 + 0.5 * Math.sin(time * 2.6 + i * 2.1)
+    const a = Math.min(0.5, (0.05 + treble * 0.55 + beat * 0.15) * twinkle)
+    if (a < 0.012) continue
+    const rad = 7
+    const mote = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad)
+    mote.addColorStop(0, `rgba(255,250,235,${a.toFixed(3)})`)
+    mote.addColorStop(1, 'rgba(255,250,235,0)')
+    ctx.fillStyle = mote
+    ctx.fillRect(sx - rad, sy - rad, rad * 2, rad * 2)
+  }
+
+  ctx.restore()
 }

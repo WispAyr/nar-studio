@@ -1,13 +1,15 @@
 /**
  * Built-in engine recorder — receives encoded media chunks from the renderer's
- * MediaRecorder over IPC and writes them to a single file on disk.
+ * MediaRecorders over IPC and writes them to disk.
  *
- * Recordings are filed per NAR show: Recordings/<date>/<show-slug>/, matching
- * the OBS recording manager's layout so both engines land in the same place.
+ * One session can hold several concurrent recordings: the program output plus
+ * a clean ISO file per camera. They are filed together under
+ * Recordings/<date>/<show-slug>/, matching the OBS recording manager's layout.
  */
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
+import { app, shell } from 'electron'
+import { EventEmitter } from 'events'
 
 export interface RecShow {
   name: string
@@ -30,8 +32,16 @@ function showSlug(name: string, uid: string): string {
   return `${base}-${uid}`
 }
 
-class BuiltinRecorder {
-  private active: (BuiltinRecording & { stream: fs.WriteStream }) | null = null
+interface ActiveStream extends BuiltinRecording {
+  stream: fs.WriteStream
+  errored: boolean
+}
+
+/** Emits 'error' (with a message) when a recording file fails to write. */
+class BuiltinRecorder extends EventEmitter {
+  private streams = new Map<string, ActiveStream>()
+  /** Shared directory for the current recording session. */
+  private sessionDir: string | null = null
   private baseDir = ''
 
   setBaseDir(dir: string) {
@@ -50,34 +60,62 @@ class BuiltinRecorder {
     return path.join(this.baseDir, new Date().toISOString().slice(0, 10))
   }
 
-  start(show: RecShow | null, ext: string): BuiltinRecording {
-    if (this.active) this.stop()
-    const dir = this.resolveDir(show)
-    fs.mkdirSync(dir, { recursive: true })
+  /**
+   * Open a new file in the current session. `name` is the filename prefix
+   * ('program', 'cam1', …). The session directory is resolved on the first
+   * call and shared by every file until they have all stopped.
+   */
+  start(show: RecShow | null, name: string, ext: string): BuiltinRecording {
+    if (!this.sessionDir) {
+      this.sessionDir = this.resolveDir(show)
+      fs.mkdirSync(this.sessionDir, { recursive: true })
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const filePath = path.join(dir, `program-${stamp}.${ext}`)
+    const id = `${name}-${stamp}`
+    const filePath = path.join(this.sessionDir, `${name}-${stamp}.${ext}`)
     const stream = fs.createWriteStream(filePath)
-    this.active = { id: stamp, filePath, startedAt: new Date().toISOString(), stream }
+    const startedAt = new Date().toISOString()
+    this.streams.set(id, { id, filePath, startedAt, stream, errored: false })
+    // Surface disk-write failures (disk full, permissions) — once per file.
+    stream.on('error', err => {
+      const rec = this.streams.get(id)
+      if (rec && !rec.errored) {
+        rec.errored = true
+        console.error(`[builtin-rec] write failed: ${rec.filePath}: ${err.message}`)
+        this.emit('error', `Recording write failed (${name}) — ${err.message}`)
+      }
+    })
     console.log(`[builtin-rec] started: ${filePath}`)
-    return { id: this.active.id, filePath, startedAt: this.active.startedAt }
+    return { id, filePath, startedAt }
   }
 
   write(id: string, chunk: ArrayBuffer) {
-    if (this.active?.id === id) this.active.stream.write(Buffer.from(chunk))
+    const rec = this.streams.get(id)
+    if (rec && !rec.errored) rec.stream.write(Buffer.from(chunk))
   }
 
-  stop(): string | null {
-    if (!this.active) return null
-    const filePath = this.active.filePath
-    this.active.stream.end()
-    this.active = null
-    console.log(`[builtin-rec] stopped: ${filePath}`)
-    return filePath
+  stop(id: string): string | null {
+    const rec = this.streams.get(id)
+    if (!rec) return null
+    rec.stream.end()
+    this.streams.delete(id)
+    // The session is over once its last file has closed.
+    if (this.streams.size === 0) this.sessionDir = null
+    console.log(`[builtin-rec] stopped: ${rec.filePath}`)
+    return rec.filePath
   }
 
-  getActive(): BuiltinRecording | null {
-    if (!this.active) return null
-    return { id: this.active.id, filePath: this.active.filePath, startedAt: this.active.startedAt }
+  /** Close every open recording — used on app shutdown. */
+  stopAll() {
+    for (const id of [...this.streams.keys()]) this.stop(id)
+  }
+
+  /** Open the recordings location — the live session folder, or the root. */
+  openFolder(): Promise<string> {
+    const dir = this.sessionDir
+      ?? (this.baseDir || path.join(app.getPath('videos'), 'NAR Studio', 'Recordings'))
+    try { fs.mkdirSync(dir, { recursive: true }) } catch { /* ignore */ }
+    return shell.openPath(dir)
   }
 }
 

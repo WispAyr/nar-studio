@@ -7,7 +7,7 @@ import { useEngine } from '../../engine/EngineProvider'
  * a video feed over the websocket).
  */
 export function ProgramMonitor() {
-  const { engineId, getProgramCanvas, programSource, sources, recording, streaming } = useEngine()
+  const { engineId, getProgramCanvas, programSource, sources, recording, streamStatus, autoVj } = useEngine()
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -57,11 +57,26 @@ export function ProgramMonitor() {
       </div>
 
       <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none">
+        {autoVj && (
+          <span className="text-xs font-bold bg-nar-green text-black px-2 py-0.5 rounded animate-pulse">
+            ⏵ AUTO-VJ
+          </span>
+        )}
         {recording && (
           <span className="text-xs font-bold bg-nar-red text-white px-2 py-0.5 rounded">● REC</span>
         )}
-        {streaming && (
+        {streamStatus === 'live' && (
           <span className="text-xs font-bold bg-nar-red text-white px-2 py-0.5 rounded">● LIVE</span>
+        )}
+        {streamStatus === 'reconnecting' && (
+          <span className="text-xs font-bold bg-nar-amber text-black px-2 py-0.5 rounded animate-pulse">
+            ● RECONNECTING
+          </span>
+        )}
+        {streamStatus === 'lost' && (
+          <span className="text-xs font-bold bg-nar-red text-white px-2 py-0.5 rounded animate-pulse">
+            ● STREAM LOST
+          </span>
         )}
       </div>
     </div>

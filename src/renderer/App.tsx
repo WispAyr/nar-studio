@@ -11,27 +11,72 @@ import { StatusBar } from './components/layout/StatusBar'
 import { StudioStates } from './components/states/StudioStates'
 import { CameraStreamProvider } from './camera/CameraStreamProvider'
 import { SceneAnalysisProvider } from './ai/SceneAnalysisProvider'
+import { RecognitionProvider } from './ai/RecognitionProvider'
+import { AiTrackingProvider } from './ai/AiTrackingProvider'
 import { CGProvider } from './cg/CGProvider'
 import { CGPanel } from './components/cg/CGPanel'
+import { VizProvider } from './viz/VizProvider'
+import { VizPanel } from './components/viz/VizPanel'
+import { GradeProvider } from './grade/GradeProvider'
+import { SegmentationProvider } from './segmentation/SegmentationProvider'
+import { ColourView } from './components/colour/ColourView'
+import { DirectorProvider } from './ai/DirectorProvider'
+import { DirectorPanel } from './components/director/DirectorPanel'
+import { StreamDeckProvider } from './streamdeck/StreamDeckProvider'
+import { StreamDeckView } from './components/streamdeck/StreamDeckView'
 import { EngineProvider } from './engine/EngineProvider'
 
-type RightTab = 'router' | 'stream' | 'recording' | 'cg'
+type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director'
+type View = 'switcher' | 'colour' | 'streamdeck'
 
 export default function App() {
   return (
     <CameraStreamProvider>
       <SceneAnalysisProvider>
-        <CGProvider>
-          <EngineProvider>
-            <AppInner />
-          </EngineProvider>
-        </CGProvider>
+        <RecognitionProvider>
+          <VizProvider>
+            <CGProvider>
+              <GradeProvider>
+                <SegmentationProvider>
+                  <EngineProvider>
+                    <DirectorProvider>
+                      {/* AiTracking sits below EngineProvider so it can see which
+                          cameras are live and pause tracking on them. */}
+                      <AiTrackingProvider>
+                        <StreamDeckProvider>
+                          <Workspace />
+                        </StreamDeckProvider>
+                      </AiTrackingProvider>
+                    </DirectorProvider>
+                  </EngineProvider>
+                </SegmentationProvider>
+              </GradeProvider>
+            </CGProvider>
+          </VizProvider>
+        </RecognitionProvider>
       </SceneAnalysisProvider>
     </CameraStreamProvider>
   )
 }
 
-function AppInner() {
+// Top-level view switch. The provider tree stays mounted across views, so
+// opening the Colour grading workspace never interrupts a live program.
+function Workspace() {
+  const [view, setView] = useState<View>('switcher')
+  if (view === 'colour') return <ColourView onExit={() => setView('switcher')} />
+  if (view === 'streamdeck') return <StreamDeckView onExit={() => setView('switcher')} />
+  return (
+    <AppInner
+      onOpenColour={() => setView('colour')}
+      onOpenStreamDeck={() => setView('streamdeck')}
+    />
+  )
+}
+
+function AppInner({ onOpenColour, onOpenStreamDeck }: {
+  onOpenColour: () => void
+  onOpenStreamDeck: () => void
+}) {
   const [selectedCamera, setSelectedCamera] = useState(() => {
     const v = Number(localStorage.getItem('nar-selected-camera'))
     return v >= 0 && v <= 3 ? v : 0
@@ -66,6 +111,22 @@ function AppInner() {
 
         {/* Right sidebar */}
         <div className="w-72 flex flex-col gap-1 shrink-0">
+
+          {/* Workspace shortcuts */}
+          <div className="grid grid-cols-2 gap-1 shrink-0">
+            <button
+              onClick={onOpenColour}
+              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-xs font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
+            >
+              Colour
+            </button>
+            <button
+              onClick={onOpenStreamDeck}
+              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-xs font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
+            >
+              Stream Deck
+            </button>
+          </div>
 
           {/* Camera controls for selected camera */}
           <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '440px' }}>
@@ -105,6 +166,8 @@ function AppInner() {
                 { id: 'stream', label: 'Stream' },
                 { id: 'recording', label: 'Record' },
                 { id: 'cg', label: 'CG' },
+                { id: 'viz', label: 'Viz' },
+                { id: 'director', label: 'Direct' },
               ] as { id: RightTab; label: string }[]).map(tab => (
                 <button
                   key={tab.id}
@@ -124,6 +187,8 @@ function AppInner() {
               {rightTab === 'stream' && <StreamPanel />}
               {rightTab === 'recording' && <RecordingPanel />}
               {rightTab === 'cg' && <CGPanel />}
+              {rightTab === 'viz' && <VizPanel />}
+              {rightTab === 'director' && <DirectorPanel />}
             </div>
           </div>
         </div>

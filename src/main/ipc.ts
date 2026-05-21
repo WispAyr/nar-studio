@@ -7,6 +7,7 @@ import { streamManager } from './stream'
 import { builtinRecorder } from './builtinRecorder'
 import { builtinStreamer } from './builtinStreamer'
 import { cgAssets } from './cgAssets'
+import { vizShaders } from './vizShaders'
 
 export function registerIpcHandlers(ipc: IpcMain) {
 
@@ -66,14 +67,19 @@ export function registerIpcHandlers(ipc: IpcMain) {
     recordingManager.setBaseDir(dir))
 
   // ── Built-in engine recording (renderer MediaRecorder → disk) ─────────────
-  ipc.handle('builtin-rec:start', (_e, { show, ext }) => builtinRecorder.start(show, ext))
+  ipc.handle('builtin-rec:start', (_e, { show, name, ext }) => builtinRecorder.start(show, name, ext))
   ipc.handle('builtin-rec:write', (_e, { id, chunk }) => builtinRecorder.write(id, chunk))
-  ipc.handle('builtin-rec:stop', () => builtinRecorder.stop())
+  ipc.handle('builtin-rec:stop', (_e, { id }) => builtinRecorder.stop(id))
+  ipc.handle('builtin-rec:open-folder', () => builtinRecorder.openFolder())
 
   // ── Built-in engine streaming (renderer MediaRecorder → FFmpeg → RTMP) ────
   ipc.handle('builtin-stream:start', (_e, { rtmpUrl, streamKey }) => builtinStreamer.start(rtmpUrl, streamKey))
   ipc.handle('builtin-stream:write', (_e, { chunk }) => builtinStreamer.write(chunk))
   ipc.handle('builtin-stream:stop', () => builtinStreamer.stop())
+
+  // ── Custom visualizer shaders ─────────────────────────────────────────────
+  ipc.handle('viz-shaders:list', () => vizShaders.list())
+  ipc.handle('viz-shaders:open-folder', () => vizShaders.openFolder())
 
   // ── CG asset library ──────────────────────────────────────────────────────
   ipc.handle('cg:list', () => cgAssets.list())

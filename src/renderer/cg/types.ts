@@ -19,4 +19,8 @@ export interface CgLayer {
   template?: TitleTemplate
   opacity: number
   blend: GlobalCompositeOperation
+  /** performance.now() when the layer was added — drives the entrance animation. */
+  addedAt: number
+  /** performance.now() when removal began, else null — drives the exit animation. */
+  removingAt: number | null
 }

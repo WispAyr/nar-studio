@@ -1,9 +1,9 @@
 import { useEngine } from '../../engine/EngineProvider'
-import type { LayoutType } from '../../engine/types'
+import { VIZ_SLOT, type LayoutType } from '../../engine/types'
 
 const OUTPUTS = [
-  { id: 'program', label: 'PGM', color: 'border-nar-red text-nar-red' },
-  { id: 'stream', label: 'RTMP', color: 'border-nar-amber text-nar-amber' },
+  { id: 'program', label: 'PGM', hint: 'Program — the live output', color: 'border-nar-red text-nar-red' },
+  { id: 'stream', label: 'RTMP', hint: 'Stream output — always follows Program', color: 'border-nar-amber text-nar-amber' },
 ]
 
 const LAYOUTS: { id: LayoutType; label: string }[] = [
@@ -11,6 +11,13 @@ const LAYOUTS: { id: LayoutType; label: string }[] = [
   { id: 'split', label: 'Split' },
   { id: 'pip', label: 'PiP' },
 ]
+
+const TRANSITION_HINTS: Record<string, string> = {
+  cut: 'Instant hard cut',
+  fade: 'Crossfade between shots',
+  dip: 'Dip through black',
+  reactive: 'Audio-reactive — flashes on a beat, dissolves softly when quiet',
+}
 
 const SLOT_LABELS: Record<LayoutType, string[]> = {
   solo: ['Program'],
@@ -22,9 +29,12 @@ export function VideoRouter() {
   const {
     engineId, programSource, programCams, sources, obsScenes, cut,
     transition, setTransition, layout, setLayout, programSlots, activeSlot, setActiveSlot,
+    beatFx, setBeatFx, autoVj, setAutoVj, autoVjHold, setAutoVjHold,
+    autoVjViz, setAutoVjViz, autoVjLayouts, setAutoVjLayouts, dropToViz, setDropToViz,
   } = useEngine()
 
-  const inProgram = (key: string) => programCams.includes(Number(key.slice(3)))
+  const inProgram = (key: string) =>
+    key === 'viz' ? programSlots.includes(VIZ_SLOT) : programCams.includes(Number(key.slice(3)))
 
   return (
     <div className="flex flex-col gap-2 p-3 h-full overflow-y-auto">
@@ -36,7 +46,11 @@ export function VideoRouter() {
             <tr>
               <th className="text-left text-slate-600 pb-1 pr-2 font-normal">Source</th>
               {OUTPUTS.map(out => (
-                <th key={out.id} className={`text-center pb-1 px-2 font-bold border-b ${out.color}`}>
+                <th
+                  key={out.id}
+                  title={out.hint}
+                  className={`text-center pb-1 px-2 font-bold border-b ${out.color}`}
+                >
                   {out.label}
                 </th>
               ))}
@@ -128,10 +142,11 @@ export function VideoRouter() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-600 uppercase tracking-wider shrink-0">Transition</span>
           <div className="flex gap-1 flex-1">
-            {(['cut', 'fade', 'dip'] as const).map(t => (
+            {(['cut', 'fade', 'dip', 'reactive'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTransition(t)}
+                title={TRANSITION_HINTS[t]}
                 className={`flex-1 text-xs py-1 rounded capitalize transition-colors ${
                   transition === t ? 'bg-nar-blue text-white' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
                 }`}
@@ -139,6 +154,91 @@ export function VideoRouter() {
                 {t}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Audio-reactive switching & FX — built-in engine */}
+      {engineId === 'builtin' && (
+        <div className="flex flex-col gap-1.5 pt-1.5 border-t border-surface-800">
+          <span className="text-xs text-slate-600 uppercase tracking-wider">Audio Reactive</span>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAutoVj(!autoVj)}
+              title="Autopilot — cuts cameras on the beat. Any manual cut overrides instantly."
+              className={`text-xs w-[88px] py-1 rounded font-bold transition-colors shrink-0 ${
+                autoVj ? 'bg-nar-green text-black' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Auto-VJ
+            </button>
+            <span className="text-xs text-slate-600 flex-1">cuts cams on the beat</span>
+          </div>
+          {autoVj && (
+            <div className="flex items-center gap-2 pl-1">
+              <span className="text-xs text-slate-600 shrink-0">Hold</span>
+              <input
+                type="range" min={0.8} max={6} step={0.1} value={autoVjHold}
+                onChange={e => setAutoVjHold(Number(e.target.value))}
+                className="flex-1 accent-nar-blue"
+              />
+              <span className="text-xs text-slate-400 tabular-nums w-9">{autoVjHold.toFixed(1)}s</span>
+            </div>
+          )}
+          {autoVj && (
+            <div className="flex items-center gap-2 pl-1">
+              <button
+                onClick={() => setAutoVjViz(!autoVjViz)}
+                title="Let the director cut to the music visualizer between camera shots"
+                className={`text-xs w-[88px] py-1 rounded font-bold transition-colors shrink-0 ${
+                  autoVjViz ? 'bg-nar-green text-black' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                Visuals
+              </button>
+              <span className="text-xs text-slate-600 flex-1">director uses the visualizer</span>
+            </div>
+          )}
+          {autoVj && (
+            <div className="flex items-center gap-2 pl-1">
+              <button
+                onClick={() => setAutoVjLayouts(!autoVjLayouts)}
+                title="Let the director use split / PiP — only when two cameras each have someone in frame"
+                className={`text-xs w-[88px] py-1 rounded font-bold transition-colors shrink-0 ${
+                  autoVjLayouts ? 'bg-nar-green text-black' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                Layouts
+              </button>
+              <span className="text-xs text-slate-600 flex-1">picks split / PiP for two-ups</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBeatFx(!beatFx)}
+              title="Beat-pulse vignette + punch-zoom on the program output"
+              className={`text-xs w-[88px] py-1 rounded font-bold transition-colors shrink-0 ${
+                beatFx ? 'bg-nar-green text-black' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Beat FX
+            </button>
+            <span className="text-xs text-slate-600 flex-1">pulse + punch on beats</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDropToViz(!dropToViz)}
+              title="Auto-cut to the music visualizer when the track drops, back when it calms"
+              className={`text-xs w-[88px] py-1 rounded font-bold transition-colors shrink-0 ${
+                dropToViz ? 'bg-nar-green text-black' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Drop → Viz
+            </button>
+            <span className="text-xs text-slate-600 flex-1">visualizer on the drop</span>
           </div>
         </div>
       )}

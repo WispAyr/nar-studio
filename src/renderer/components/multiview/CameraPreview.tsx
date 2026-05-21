@@ -1,17 +1,18 @@
 import { useEffect, useRef } from 'react'
+import { AiOverlay } from '../../ai/AiOverlay'
 
 interface Props {
   label: string
+  cameraIndex: number
   stream: MediaStream | null
   hasSignal: boolean
   isProgram: boolean
   isSelected: boolean
   aiTracking?: boolean
-  peopleCount?: number
   onCut: () => void
 }
 
-export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected, aiTracking, peopleCount, onCut }: Props) {
+export function CameraPreview({ label, cameraIndex, stream, hasSignal, isProgram, isSelected, aiTracking, onCut }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -32,7 +33,10 @@ export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected,
       title={isProgram ? `${label} — on air` : `Cut ${label} to air`}
     >
       {hasSignal && stream ? (
-        <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-contain bg-black" />
+        <>
+          <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-contain bg-black" />
+          <AiOverlay index={cameraIndex} />
+        </>
       ) : (
         <div className="w-full h-full flex items-center justify-center bg-surface-800">
           <span className="text-slate-600 text-xs uppercase tracking-wider">No Signal</span>
@@ -52,13 +56,8 @@ export function CameraPreview({ label, stream, hasSignal, isProgram, isSelected,
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold bg-black/60 px-1.5 py-0.5 rounded text-white">{label}</span>
           <div className="flex gap-1">
-            {!!peopleCount && (
-              <span className="text-xs bg-nar-green/80 text-black px-1.5 py-0.5 rounded font-bold tabular-nums">
-                {peopleCount} seen
-              </span>
-            )}
             {aiTracking && (
-              <span className="text-xs bg-nar-green/80 text-black px-1.5 py-0.5 rounded font-bold">AI</span>
+              <span className="text-xs bg-nar-green/80 text-black px-1.5 py-0.5 rounded font-bold">AI TRACK</span>
             )}
             {isProgram && (
               <span className="text-xs bg-nar-red text-white px-1.5 py-0.5 rounded font-bold animate-pulse">PGM</span>

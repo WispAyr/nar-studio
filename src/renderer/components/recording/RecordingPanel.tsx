@@ -30,10 +30,15 @@ export function RecordingPanel() {
 }
 
 function BuiltinRecording() {
-  const { recording, recordingStartedAt, recordingFile, startRecording, stopRecording, autoRecord, setAutoRecord } = useEngine()
+  const {
+    recording, recordingStartedAt, recordingFile, startRecording, stopRecording,
+    autoRecord, setAutoRecord, recordIso, setRecordIso, isoCount, recordError,
+  } = useEngine()
   const { current } = useSchedule()
   const elapsed = useElapsed(recordingStartedAt)
   const [error, setError] = useState<string | null>(null)
+  // The session folder — program + every ISO file are saved here together.
+  const folder = recordingFile ? recordingFile.replace(/[\\/][^\\/]*$/, '') : null
 
   const start = async () => {
     setError(null)
@@ -48,15 +53,31 @@ function BuiltinRecording() {
     <div className="flex flex-col gap-2 p-3 h-full">
       <div className="flex items-center justify-between">
         <span className="text-xs text-slate-500 uppercase tracking-wider">Recording — Built-in</span>
-        <button
-          onClick={() => setAutoRecord(!autoRecord)}
-          className={`text-xs px-2 py-0.5 rounded transition-colors ${
-            autoRecord ? 'bg-nar-green/20 text-nar-green border border-nar-green/30' : 'bg-surface-700 text-slate-500'
-          }`}
-        >
-          AUTO {autoRecord ? 'ON' : 'OFF'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => studio?.builtinRecOpenFolder?.()}
+            title="Open the recordings folder"
+            className="text-xs text-slate-500 hover:text-slate-300"
+          >
+            Open folder
+          </button>
+          <button
+            onClick={() => setAutoRecord(!autoRecord)}
+            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+              autoRecord ? 'bg-nar-green/20 text-nar-green border border-nar-green/30' : 'bg-surface-700 text-slate-500'
+            }`}
+          >
+            AUTO {autoRecord ? 'ON' : 'OFF'}
+          </button>
+        </div>
       </div>
+
+      {recordError && (
+        <div className="flex items-start gap-1.5 p-2 rounded bg-nar-red/15 border border-nar-red/40">
+          <span className="text-xs font-bold text-nar-red shrink-0">⚠ DISK</span>
+          <span className="text-xs text-nar-red">{recordError}</span>
+        </div>
+      )}
 
       {recording ? (
         <div className="flex flex-col gap-1 p-2 rounded bg-surface-800 border border-nar-red/30">
@@ -65,7 +86,12 @@ function BuiltinRecording() {
             <span className="text-xs font-bold text-white truncate">{current?.name ?? 'Program'}</span>
           </div>
           <span className="text-lg font-mono font-bold text-nar-red tabular-nums">{elapsed}</span>
-          {recordingFile && <span className="text-xs text-slate-600 truncate">{recordingFile}</span>}
+          <span className="text-xs text-slate-500">
+            Program{isoCount > 0 ? ` + ${isoCount} ISO camera ${isoCount === 1 ? 'file' : 'files'}` : ''} →
+          </span>
+          {folder && (
+            <span className="text-xs text-slate-600 truncate" title={folder}>{folder}</span>
+          )}
           <button
             onClick={stopRecording}
             className="mt-1 text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1 rounded transition-colors font-bold uppercase tracking-wider"
@@ -79,11 +105,23 @@ function BuiltinRecording() {
             onClick={start}
             className="text-xs bg-nar-red hover:bg-red-600 text-white py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
           >
-            ● REC Program
+            ● REC Program{recordIso ? ' + ISO' : ''}
           </button>
           {error && <span className="text-xs text-nar-red">{error}</span>}
+          <button
+            onClick={() => setRecordIso(!recordIso)}
+            className={`text-xs px-2 py-1 rounded transition-colors font-bold uppercase tracking-wider ${
+              recordIso
+                ? 'bg-nar-green/20 text-nar-green border border-nar-green/30'
+                : 'bg-surface-700 text-slate-500'
+            }`}
+          >
+            ISO per-camera {recordIso ? 'ON' : 'OFF'}
+          </button>
           <span className="text-xs text-slate-600">
-            Records the program output (video + studio audio) to Videos/NAR Studio/Recordings.
+            {recordIso
+              ? 'Records the program plus a clean, ungraded file per camera — all to Videos/NAR Studio/Recordings.'
+              : 'Records the program output only (video + studio audio).'}
           </span>
         </div>
       )}

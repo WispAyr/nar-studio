@@ -1,16 +1,25 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
 import { useCG } from '../cg/CGProvider'
+import { useViz } from '../viz/VizProvider'
+import { useGrade } from '../grade/GradeProvider'
+import { useSegmentation } from '../segmentation/SegmentationProvider'
+import { useSceneAnalysis } from '../ai/SceneAnalysisProvider'
 import { useBuiltinRecorder, type RecordingShow } from './useBuiltinRecorder'
-import { useBuiltinStreamer } from './useBuiltinStreamer'
+import { useBuiltinStreamer, type StreamStatus } from './useBuiltinStreamer'
 import { useSchedule } from '../hooks/useSchedule'
-import { SLOT_COUNT, type EngineId, type EngineSource, type TransitionType, type LayoutType } from './types'
+import { SLOT_COUNT, VIZ_SLOT, type EngineId, type EngineSource, type TransitionType, type LayoutType } from './types'
 
 const studio = (window as any).studio
 
 const PROGRAM_W = 1920
 const PROGRAM_H = 1080
 const OBS_SCENE_FOR_CAM = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
+
+// CG layer entrance / exit animation lengths (ms). LAYER_OUT_MS is kept in
+// step with CGProvider's LAYER_EXIT_MS so a layer animates fully before prune.
+const LAYER_IN_MS = 480
+const LAYER_OUT_MS = 380
 
 interface ObsRaw {
   connected: boolean
@@ -39,20 +48,50 @@ interface EngineContextValue {
   obsScenes: string[]
   recording: boolean
   streaming: boolean
+  /** Stream health — idle / live / reconnecting after an RTMP drop / lost. */
+  streamStatus: StreamStatus
   recordTimecode: string | null
   streamTimecode: string | null
   recordingStartedAt: number | null
   recordingFile: string | null
+  /** A disk-write failure during recording (disk full, permissions), else null. */
+  recordError: string | null
   startRecording: (show: RecordingShow | null) => Promise<void>
   stopRecording: () => void
   autoRecord: boolean
   setAutoRecord: (on: boolean) => void
+  /** Whether a clean ISO file is recorded per camera alongside the program. */
+  recordIso: boolean
+  setRecordIso: (on: boolean) => void
+  /** Number of ISO camera files in the active recording. */
+  isoCount: number
   streamStartedAt: number | null
   startStream: (rtmpUrl: string, streamKey: string) => Promise<void>
   stopStream: () => void
-  cut: (sourceKey: string) => void
+  cut: (sourceKey: string, transition?: TransitionType) => void
   transition: TransitionType
   setTransition: (t: TransitionType) => void
+  /** Cinematic letterbox matte — aspect ratio (e.g. 2.39), 0 = off. */
+  letterbox: number
+  setLetterbox: (aspect: number) => void
+  /** Beat-pulse vignette + punch-zoom treatment on the program output. */
+  beatFx: boolean
+  setBeatFx: (on: boolean) => void
+  /** Autopilot: cut between cameras on the beat. Manual cuts always override. */
+  autoVj: boolean
+  setAutoVj: (on: boolean) => void
+  /** Minimum seconds an Auto-VJ shot holds before the next beat cut. */
+  autoVjHold: number
+  setAutoVjHold: (s: number) => void
+  /** Let the Auto-VJ director cut to the music visualizer, not just cameras. */
+  autoVjViz: boolean
+  setAutoVjViz: (on: boolean) => void
+  /** Let the director choose split / PiP layouts when 2+ cameras have people. */
+  autoVjLayouts: boolean
+  setAutoVjLayouts: (on: boolean) => void
+  /** Auto-swap to the visualizer when the track drops, back when it calms. */
+  dropToViz: boolean
+  setDropToViz: (on: boolean) => void
   layout: LayoutType
   setLayout: (l: LayoutType) => void
   programSlots: number[]
@@ -82,6 +121,20 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   const cg = useCG()
   const cgRef = useRef(cg)
   cgRef.current = cg
+  const viz = useViz()
+  const vizRef = useRef(viz)
+  vizRef.current = viz
+  const grade = useGrade()
+  const gradeRef = useRef(grade)
+  gradeRef.current = grade
+  const seg = useSegmentation()
+  const segRef = useRef(seg)
+  segRef.current = seg
+  const { analysis } = useSceneAnalysis()
+  const camSourcesRef = useRef(camSources)
+  camSourcesRef.current = camSources
+  const analysisRef = useRef(analysis)
+  analysisRef.current = analysis
 
   const [engineId, setEngineIdState] = useState<EngineId>(
     () => (localStorage.getItem('nar-engine') as EngineId) || 'builtin'
@@ -120,7 +173,65 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('nar-transition', t)
     setTransitionState(t)
   }, [])
-  const activeTransitionRef = useRef<{ type: 'fade' | 'dip'; startedAt: number; durationMs: number } | null>(null)
+  const activeTransitionRef = useRef<{ effect: 'fade' | 'dip' | 'flash'; startedAt: number; durationMs: number } | null>(null)
+
+  // Cinematic letterbox — aspect ratio of the matte (0 = off). Director-driven.
+  const [letterbox, setLetterboxState] = useState(0)
+  const letterboxRef = useRef(0)
+  letterboxRef.current = letterbox
+  const setLetterbox = useCallback((aspect: number) => setLetterboxState(aspect), [])
+
+  // ── Audio-reactive switching & FX ─────────────────────────────────────────
+  const [beatFx, setBeatFxState] = useState(() => localStorage.getItem('nar-beat-fx') === 'on')
+  const beatFxRef = useRef(beatFx)
+  beatFxRef.current = beatFx
+  const setBeatFx = useCallback((on: boolean) => {
+    localStorage.setItem('nar-beat-fx', on ? 'on' : 'off')
+    setBeatFxState(on)
+  }, [])
+
+  const [autoVj, setAutoVjState] = useState(() => localStorage.getItem('nar-auto-vj') === 'on')
+  const setAutoVj = useCallback((on: boolean) => {
+    localStorage.setItem('nar-auto-vj', on ? 'on' : 'off')
+    setAutoVjState(on)
+  }, [])
+  const [autoVjHold, setAutoVjHoldState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-auto-vj-hold'))
+    return v >= 0.8 && v <= 6 ? v : 2.4
+  })
+  const setAutoVjHold = useCallback((s: number) => {
+    localStorage.setItem('nar-auto-vj-hold', String(s))
+    setAutoVjHoldState(s)
+  }, [])
+  const [autoVjViz, setAutoVjVizState] = useState(() => localStorage.getItem('nar-auto-vj-viz') === 'on')
+  const autoVjVizRef = useRef(autoVjViz)
+  autoVjVizRef.current = autoVjViz
+  const setAutoVjViz = useCallback((on: boolean) => {
+    localStorage.setItem('nar-auto-vj-viz', on ? 'on' : 'off')
+    setAutoVjVizState(on)
+  }, [])
+  const [autoVjLayouts, setAutoVjLayoutsState] = useState(() => localStorage.getItem('nar-auto-vj-layouts') === 'on')
+  const autoVjLayoutsRef = useRef(autoVjLayouts)
+  autoVjLayoutsRef.current = autoVjLayouts
+  const setAutoVjLayouts = useCallback((on: boolean) => {
+    localStorage.setItem('nar-auto-vj-layouts', on ? 'on' : 'off')
+    setAutoVjLayoutsState(on)
+  }, [])
+
+  const [dropToViz, setDropToVizState] = useState(() => localStorage.getItem('nar-drop-viz') === 'on')
+  const setDropToViz = useCallback((on: boolean) => {
+    localStorage.setItem('nar-drop-viz', on ? 'on' : 'off')
+    setDropToVizState(on)
+  }, [])
+
+  // Director timing — shared between the manual cut() and the auto-director loop.
+  const autoLastCutRef = useRef(0)
+  const dropStateRef = useRef<{
+    active: boolean
+    returnProgram: BuiltinProgram | null
+    hotSince: number
+    coldSince: number
+  }>({ active: false, returnProgram: null, hotSince: 0, coldSince: 0 })
 
   // Bumper / ad-break — a full-screen video that takes over the program.
   const [bumper, setBumper] = useState<{ url: string; label: string } | null>(null)
@@ -134,10 +245,25 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   if (!prevCanvasRef.current) prevCanvasRef.current = makeCanvas()
   const programStreamRef = useRef<MediaStream | null>(null)
 
-  /** Snapshot the current program frame and arm a transition (no-op for hard cut). */
-  const beginTransition = useCallback(() => {
-    const type = transitionRef.current
-    if (type === 'cut') return
+  /**
+   * Snapshot the current program frame and arm a transition (no-op for hard
+   * cut). In 'reactive' mode the effect is chosen from the audio at cut time:
+   * a hard beat gets a flash, a loud passage a quick fade, quiet a slow dissolve.
+   */
+  const beginTransition = useCallback((override?: TransitionType) => {
+    const mode = override ?? transitionRef.current
+    if (mode === 'cut') return
+    let effect: 'fade' | 'dip' | 'flash'
+    let durationMs: number
+    if (mode === 'reactive') {
+      const lv = vizRef.current.levelsRef.current
+      if (lv.beat > 0.45) { effect = 'flash'; durationMs = 260 }
+      else if (lv.level > 0.32) { effect = 'fade'; durationMs = 230 }
+      else { effect = 'fade'; durationMs = 560 }
+    } else {
+      effect = mode
+      durationMs = mode === 'dip' ? 700 : 450
+    }
     const master = masterCanvasRef.current
     const prev = prevCanvasRef.current
     if (master && prev) {
@@ -145,11 +271,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       pctx.clearRect(0, 0, PROGRAM_W, PROGRAM_H)
       pctx.drawImage(master, 0, 0)
     }
-    activeTransitionRef.current = {
-      type,
-      startedAt: performance.now(),
-      durationMs: type === 'dip' ? 700 : 450,
-    }
+    activeTransitionRef.current = { effect, startedAt: performance.now(), durationMs }
   }, [])
 
   // Compositor loop — renders the program layout + CG, with snapshot transitions.
@@ -162,24 +284,71 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     const drawCamInto = (
       camIdx: number, dx: number, dy: number, dw: number, dh: number, mode: 'cover' | 'contain',
     ) => {
-      const v = camIdx >= 0 ? videoEls.current[camIdx] : null
-      if (!v || v.readyState < 2 || v.videoWidth === 0) return
-      const sw = v.videoWidth, sh = v.videoHeight
+      let src: CanvasImageSource
+      let sw: number, sh: number
+      if (camIdx === VIZ_SLOT) {
+        const vc = vizRef.current.getCanvas()
+        if (!vc) return
+        src = vc; sw = vc.width; sh = vc.height
+      } else {
+        const v = camIdx >= 0 ? videoEls.current[camIdx] : null
+        if (!v || v.readyState < 2 || v.videoWidth === 0) return
+        // Colour grade (null when neutral), then live background segmentation
+        // (null when the camera's background mode is off) — so an unprocessed
+        // camera still draws its raw frame exactly as before.
+        const graded = gradeRef.current.gradeFrame(camIdx, v)
+        const segged = segRef.current.segmentFrame(camIdx, graded ?? v)
+        if (segged) { src = segged; sw = segged.width; sh = segged.height }
+        else if (graded) { src = graded; sw = graded.width; sh = graded.height }
+        else { src = v; sw = v.videoWidth; sh = v.videoHeight }
+      }
       const scale = mode === 'cover' ? Math.max(dw / sw, dh / sh) : Math.min(dw / sw, dh / sh)
       const w = sw * scale, h = sh * scale
       ctx.save()
       ctx.beginPath()
       ctx.rect(dx, dy, dw, dh)
       ctx.clip()
-      ctx.drawImage(v, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h)
+      ctx.drawImage(src, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h)
       ctx.restore()
+    }
+
+    // Beat-pulse treatment — a vignette + red edge bloom that breathes with
+    // the music. Drawn at frame edges, after the (punch-scaled) program.
+    const drawBeatFx = (beat: number, level: number) => {
+      const cx = PROGRAM_W / 2, cy = PROGRAM_H / 2
+      const vig = Math.min(0.82, 0.16 + beat * 0.42 + level * 0.10)
+      const g1 = ctx.createRadialGradient(cx, cy, PROGRAM_H * 0.36, cx, cy, PROGRAM_H * 0.92)
+      g1.addColorStop(0, 'rgba(0,0,0,0)')
+      g1.addColorStop(1, `rgba(6,3,6,${vig})`)
+      ctx.fillStyle = g1
+      ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+      if (beat > 0.04) {
+        ctx.save()
+        ctx.globalCompositeOperation = 'screen'
+        const g2 = ctx.createRadialGradient(cx, cy, PROGRAM_H * 0.52, cx, cy, PROGRAM_H)
+        g2.addColorStop(0, 'rgba(0,0,0,0)')
+        g2.addColorStop(1, `rgba(232,0,60,${beat * 0.30})`)
+        ctx.fillStyle = g2
+        ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+        ctx.restore()
+      }
     }
 
     const renderProgram = () => {
       ctx.fillStyle = '#070708'
       ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
-      const { layout, slots } = builtinProgramRef.current
 
+      const fx = beatFxRef.current ? vizRef.current.levelsRef.current : null
+
+      ctx.save()
+      if (fx && fx.beat > 0.002) {
+        const z = 1 + fx.beat * 0.045   // micro punch-zoom on the beat
+        ctx.translate(PROGRAM_W / 2, PROGRAM_H / 2)
+        ctx.scale(z, z)
+        ctx.translate(-PROGRAM_W / 2, -PROGRAM_H / 2)
+      }
+
+      const { layout, slots } = builtinProgramRef.current
       if (layout === 'split') {
         const gap = 6
         const hw = (PROGRAM_W - gap) / 2
@@ -199,8 +368,10 @@ export function EngineProvider({ children }: { children: ReactNode }) {
         drawCamInto(slots[0], 0, 0, PROGRAM_W, PROGRAM_H, 'contain')
       }
 
-      // CG overlay layers — composited over the program only (never ISO).
+      // CG overlay layers — composited over the program only (never ISO),
+      // each with a subtle slide-and-fade entrance / exit.
       const { layers, elements } = cgRef.current
+      const cgNow = performance.now()
       for (const layer of layers) {
         const el = elements.current.get(layer.id)
         if (!el) continue
@@ -209,12 +380,26 @@ export function EngineProvider({ children }: { children: ReactNode }) {
           : el instanceof HTMLImageElement ? (!el.complete || el.naturalWidth === 0)
           : false
         if (notReady) continue
+        const pIn = Math.min(1, (cgNow - layer.addedAt) / LAYER_IN_MS)
+        const eIn = 1 - Math.pow(1 - pIn, 3)               // ease-out cubic
+        let eOut = 0
+        if (layer.removingAt != null) {
+          const pOut = Math.min(1, (cgNow - layer.removingAt) / LAYER_OUT_MS)
+          eOut = pOut * pOut                                // ease-in quad
+        }
+        const vis = eIn * (1 - eOut)
+        if (vis <= 0.001) continue
+        const dy = (1 - eIn) * 54 + eOut * 40               // slide up in, down out
         ctx.save()
-        ctx.globalAlpha = layer.opacity
+        ctx.globalAlpha = layer.opacity * vis
         ctx.globalCompositeOperation = layer.blend
-        ctx.drawImage(el, 0, 0, PROGRAM_W, PROGRAM_H)
+        ctx.drawImage(el, 0, dy, PROGRAM_W, PROGRAM_H)
         ctx.restore()
       }
+
+      ctx.restore()
+
+      if (fx) drawBeatFx(fx.beat, fx.level)
     }
 
     const drawBumper = () => {
@@ -232,21 +417,45 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       if (bumperRef.current) drawBumper()
       else renderProgram()
 
+      // Snapshot transition overlay.
       const tr = activeTransitionRef.current
-      if (!tr) return
-      const p = (performance.now() - tr.startedAt) / tr.durationMs
-      if (p >= 1) {
-        activeTransitionRef.current = null
-        return
+      if (tr) {
+        const p = (performance.now() - tr.startedAt) / tr.durationMs
+        if (p >= 1) {
+          activeTransitionRef.current = null
+        } else if (tr.effect === 'fade') {
+          ctx.globalAlpha = 1 - p
+          ctx.drawImage(prevCanvasRef.current!, 0, 0)
+          ctx.globalAlpha = 1
+        } else if (tr.effect === 'dip') {
+          if (p < 0.5) ctx.drawImage(prevCanvasRef.current!, 0, 0)
+          ctx.fillStyle = `rgba(0,0,0,${(p < 0.5 ? p : 1 - p) * 2})`
+          ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+        } else {
+          // flash — RGB-split ghost of the outgoing frame + a white pop
+          const g = 1 - p
+          const prev = prevCanvasRef.current!
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen'
+          ctx.globalAlpha = g * 0.45
+          const off = 22 * g
+          ctx.drawImage(prev, off, 0)
+          ctx.drawImage(prev, -off, 0)
+          ctx.restore()
+          ctx.fillStyle = `rgba(255,255,255,${g * g * 0.5})`
+          ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+        }
       }
-      if (tr.type === 'fade') {
-        ctx.globalAlpha = 1 - p
-        ctx.drawImage(prevCanvasRef.current!, 0, 0)
-        ctx.globalAlpha = 1
-      } else {
-        if (p < 0.5) ctx.drawImage(prevCanvasRef.current!, 0, 0)
-        ctx.fillStyle = `rgba(0,0,0,${(p < 0.5 ? p : 1 - p) * 2})`
-        ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+
+      // Cinematic letterbox — drawn last, over the program and any transition.
+      const lb = letterboxRef.current
+      if (lb > 1.78) {
+        const barH = Math.round((PROGRAM_H - PROGRAM_W / lb) / 2)
+        if (barH > 0) {
+          ctx.fillStyle = '#000'
+          ctx.fillRect(0, 0, PROGRAM_W, barH)
+          ctx.fillRect(0, PROGRAM_H - barH, PROGRAM_W, barH)
+        }
       }
     }
     raf = requestAnimationFrame(draw)
@@ -254,7 +463,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   }, [engineId, videoEls])
 
   // ── Unified surface ───────────────────────────────────────────────────────
-  const sources: EngineSource[] = Array.from({ length: 4 }, (_, i) => {
+  const camEngineSources: EngineSource[] = Array.from({ length: 4 }, (_, i) => {
     const cam = camSources.find(c => c.index === i)
     return {
       key: `cam${i}`,
@@ -262,30 +471,46 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       hasSignal: cam?.hasSignal ?? false,
     }
   })
+  // The visualizer is a built-in-engine source — peer to the four cameras.
+  const sources: EngineSource[] = engineId === 'builtin'
+    ? [...camEngineSources, { key: 'viz', label: 'Music Viz', hasSignal: true }]
+    : camEngineSources
 
   const obsSceneToKey = (scene: string) => {
     const i = OBS_SCENE_FOR_CAM.indexOf(scene)
     return i >= 0 ? `cam${i}` : scene
   }
 
-  const cut = useCallback((sourceKey: string) => {
+  /** Drop a source index into the active program slot — the shared cut primitive. */
+  const applyCut = useCallback((srcIdx: number, transitionOverride?: TransitionType) => {
+    const { layout } = builtinProgramRef.current
+    const slot = activeSlotRef.current % SLOT_COUNT[layout]
+    beginTransition(transitionOverride)
+    setBuiltinProgram(p => {
+      const slots = p.slots.slice()
+      slots[slot] = srcIdx
+      return { ...p, slots }
+    })
+    setActiveSlot((slot + 1) % SLOT_COUNT[layout])
+  }, [beginTransition])
+
+  const cut = useCallback((sourceKey: string, transitionOverride?: TransitionType) => {
     if (engineId === 'builtin') {
-      const camIdx = sourceKey.startsWith('cam') ? Number(sourceKey.slice(3)) : -1
-      if (camIdx < 0) return
-      const { layout } = builtinProgramRef.current
-      const slot = activeSlotRef.current % SLOT_COUNT[layout]
-      beginTransition()
-      setBuiltinProgram(p => {
-        const slots = p.slots.slice()
-        slots[slot] = camIdx
-        return { ...p, slots }
-      })
-      setActiveSlot((slot + 1) % SLOT_COUNT[layout])
+      let srcIdx: number
+      if (sourceKey === 'viz') srcIdx = VIZ_SLOT
+      else if (sourceKey.startsWith('cam')) srcIdx = Number(sourceKey.slice(3))
+      else return
+      applyCut(srcIdx, transitionOverride)
+      // A manual cut is authoritative — reset the auto-cut clock and release
+      // any drop-mode ownership so the director never fights the operator.
+      autoLastCutRef.current = performance.now()
+      dropStateRef.current.active = false
     } else {
+      if (sourceKey === 'viz') return
       const i = sourceKey.startsWith('cam') ? Number(sourceKey.slice(3)) : -1
       studio?.obsCut?.(i >= 0 ? OBS_SCENE_FOR_CAM[i] : sourceKey)
     }
-  }, [engineId, beginTransition])
+  }, [engineId, applyCut])
 
   const setLayout = useCallback((layout: LayoutType) => {
     beginTransition()
@@ -350,6 +575,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
       const n = Number(e.key)
       if (n >= 1 && n <= 4) { cut(`cam${n - 1}`); return }
+      if ((e.key === 'v' || e.key === 'V') && engineId === 'builtin') { cut('viz'); return }
       if ((e.key === 'r' || e.key === 'R') && engineId === 'builtin') {
         if (builtinRec.recording) builtinRec.stop()
         else builtinRec.start(null).catch(err => console.error('[engine] record start failed:', err))
@@ -359,13 +585,121 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [cut, engineId, builtinRec.recording, builtinRec.start, builtinRec.stop])
 
+  // ── Auto-director — beat-cutting between cameras + cut-to-viz on the drop.
+  // rAF-driven so beat cuts land tight. Any manual cut() overrides instantly.
+  useEffect(() => {
+    if (engineId !== 'builtin' || (!autoVj && !dropToViz)) return
+    let raf = 0
+    let lastBeatAt = 0
+
+    // Next source to cut to — a signal-bearing camera (preferring cams with a
+    // detected person so the montage never lands on an empty chair), or the
+    // music visualizer when the director is set to use visuals. -1 = nothing.
+    const pickAutoSource = (): number => {
+      const live = builtinProgramRef.current.slots
+      const vizOk = autoVjVizRef.current && !live.includes(VIZ_SLOT)
+      const signal = camSourcesRef.current.filter(c => c.hasSignal).map(c => c.index)
+      let pool = signal.filter(i => !live.includes(i))
+      if (pool.length === 0) pool = signal.filter(i => i !== live[0])
+      // ~a third of beat-cuts go to the visualizer (or all of them if no camera).
+      if (vizOk && (pool.length === 0 || Math.random() < 0.3)) return VIZ_SLOT
+      if (pool.length === 0) return -1
+      const withPeople = pool.filter(i => (analysisRef.current[i]?.people ?? 0) > 0)
+      const choose = withPeople.length > 0 ? withPeople : pool
+      return choose[Math.floor(Math.random() * choose.length)]
+    }
+
+    // Director layout decision — mostly a solo shot, but occasionally a split
+    // or PiP two-up, and only when 2+ different cameras each have someone in
+    // frame so a pane is never an empty seat or a duplicate of the other.
+    const directorLayoutCut = () => {
+      const live = builtinProgramRef.current.slots
+      const populated = camSourcesRef.current
+        .filter(c => c.hasSignal && (analysisRef.current[c.index]?.people ?? 0) > 0)
+        .map(c => c.index)
+
+      if (populated.length >= 2 && Math.random() < 0.32) {
+        const pool = populated.slice()
+        for (let i = pool.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          const t = pool[i]; pool[i] = pool[j]; pool[j] = t
+        }
+        let a = pool[0], b = pool[1]
+        if (pool.length > 2 && live.includes(a) && live.includes(b)) b = pool[2]
+        const layout: LayoutType = Math.random() < 0.5 ? 'split' : 'pip'
+        beginTransition()
+        setBuiltinProgram({ layout, slots: [a, b] })
+        setActiveSlot(0)
+        autoLastCutRef.current = performance.now()
+        return
+      }
+
+      const next = pickAutoSource()
+      if (next === -1) return
+      beginTransition()
+      setBuiltinProgram({ layout: 'solo', slots: [next] })
+      setActiveSlot(0)
+      autoLastCutRef.current = performance.now()
+    }
+
+    const tick = () => {
+      raf = requestAnimationFrame(tick)
+      if (bumperRef.current) return   // never disturb a bumper / ad break
+      const lv = vizRef.current.levelsRef.current
+      const now = performance.now()
+      const ds = dropStateRef.current
+
+      if (autoVj && !ds.active && lv.beatAt !== lastBeatAt) {
+        lastBeatAt = lv.beatAt
+        if (now - autoLastCutRef.current > autoVjHold * 1000) {
+          if (autoVjLayoutsRef.current) {
+            directorLayoutCut()
+          } else {
+            const next = pickAutoSource()
+            if (next !== -1) {
+              applyCut(next)
+              autoLastCutRef.current = now
+            }
+          }
+        }
+      }
+
+      if (dropToViz) {
+        const hot = lv.level > 0.55 || lv.bass > 0.62
+        const cold = lv.level < 0.40 && lv.bass < 0.45
+        if (!ds.active) {
+          ds.hotSince = hot ? (ds.hotSince || now) : 0
+          if (ds.hotSince && now - ds.hotSince > 350) {
+            ds.active = true
+            ds.returnProgram = builtinProgramRef.current
+            ds.hotSince = 0
+            beginTransition()
+            setBuiltinProgram({ layout: 'solo', slots: [VIZ_SLOT] })
+          }
+        } else {
+          ds.coldSince = cold ? (ds.coldSince || now) : 0
+          if (ds.coldSince && now - ds.coldSince > 1600) {
+            const back = ds.returnProgram
+            ds.active = false
+            ds.coldSince = 0
+            ds.returnProgram = null
+            beginTransition()
+            if (back) setBuiltinProgram(back)
+          }
+        }
+      }
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [engineId, autoVj, dropToViz, autoVjHold, applyCut, beginTransition])
+
   const obsCamIdx = OBS_SCENE_FOR_CAM.indexOf(obs.programScene)
   const value: EngineContextValue = {
     engineId,
     setEngineId,
     connected: engineId === 'builtin' ? true : obs.connected,
     programSource: engineId === 'builtin'
-      ? `cam${builtinProgram.slots[0]}`
+      ? (builtinProgram.slots[0] === VIZ_SLOT ? 'viz' : `cam${builtinProgram.slots[0]}`)
       : obsSceneToKey(obs.programScene),
     programCams: engineId === 'builtin'
       ? builtinProgram.slots
@@ -374,20 +708,41 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     obsScenes: obs.scenes,
     recording: engineId === 'builtin' ? builtinRec.recording : obs.recording,
     streaming: engineId === 'builtin' ? builtinStream.streaming : obs.streaming,
+    streamStatus: engineId === 'builtin'
+      ? builtinStream.status
+      : (obs.streaming ? 'live' : 'idle'),
     recordTimecode: engineId === 'builtin' ? null : obs.recordTimecode,
     streamTimecode: engineId === 'builtin' ? null : obs.streamTimecode,
     recordingStartedAt: engineId === 'builtin' ? builtinRec.startedAt : null,
     recordingFile: engineId === 'builtin' ? builtinRec.filePath : null,
+    recordError: engineId === 'builtin' ? builtinRec.recordError : null,
     startRecording: builtinRec.start,
     stopRecording: builtinRec.stop,
     autoRecord,
     setAutoRecord,
+    recordIso: builtinRec.recordIso,
+    setRecordIso: builtinRec.setRecordIso,
+    isoCount: engineId === 'builtin' ? builtinRec.isoCount : 0,
     streamStartedAt: engineId === 'builtin' ? builtinStream.startedAt : null,
     startStream: builtinStream.start,
     stopStream: builtinStream.stop,
     cut,
     transition,
     setTransition,
+    letterbox,
+    setLetterbox,
+    beatFx,
+    setBeatFx,
+    autoVj,
+    setAutoVj,
+    autoVjHold,
+    setAutoVjHold,
+    autoVjViz,
+    setAutoVjViz,
+    autoVjLayouts,
+    setAutoVjLayouts,
+    dropToViz,
+    setDropToViz,
     layout: builtinProgram.layout,
     setLayout,
     programSlots: builtinProgram.slots,

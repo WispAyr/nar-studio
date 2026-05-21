@@ -16,7 +16,7 @@ const PLATFORM_LABELS = { youtube: 'YT', twitch: 'TW', custom: '⚡' }
 const pad = (n: number) => String(n).padStart(2, '0')
 
 export function StreamPanel() {
-  const { engineId, streaming, streamTimecode, streamStartedAt, startStream, stopStream } = useEngine()
+  const { engineId, streamStatus, streamTimecode, streamStartedAt, startStream, stopStream } = useEngine()
   const [profiles, setProfiles] = useState<StreamProfile[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<StreamProfile | null>(null)
@@ -95,22 +95,8 @@ export function StreamPanel() {
         <button onClick={newProfile} className="text-xs text-slate-500 hover:text-slate-300">+ Add</button>
       </div>
 
-      {/* Go Live button */}
-      {streaming ? (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-nar-red animate-pulse" />
-            <span className="text-xs font-bold text-nar-red">LIVE</span>
-            <span className="text-xs font-mono text-slate-400 tabular-nums">{timecode}</span>
-          </div>
-          <button
-            onClick={endStream}
-            className="text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
-          >
-            End Stream
-          </button>
-        </div>
-      ) : (
+      {/* Go Live / live status */}
+      {streamStatus === 'idle' ? (
         <button
           onClick={goLive}
           disabled={!activeId}
@@ -118,6 +104,36 @@ export function StreamPanel() {
         >
           ▶ Go Live
         </button>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full animate-pulse ${
+              streamStatus === 'live' ? 'bg-nar-red' : 'bg-nar-amber'
+            }`} />
+            <span className={`text-xs font-bold ${
+              streamStatus === 'reconnecting' ? 'text-nar-amber' : 'text-nar-red'
+            }`}>
+              {streamStatus === 'live' ? 'LIVE'
+                : streamStatus === 'reconnecting' ? 'RECONNECTING…'
+                : 'STREAM LOST'}
+            </span>
+            {streamStatus === 'live' && (
+              <span className="text-xs font-mono text-slate-400 tabular-nums">{timecode}</span>
+            )}
+          </div>
+          {streamStatus === 'reconnecting' && (
+            <span className="text-xs text-slate-500">RTMP dropped — restoring the stream…</span>
+          )}
+          {streamStatus === 'lost' && (
+            <span className="text-xs text-nar-red">Can’t reach the stream — still retrying. Check the connection.</span>
+          )}
+          <button
+            onClick={endStream}
+            className="text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
+          >
+            End Stream
+          </button>
+        </div>
       )}
       {error && <span className="text-xs text-nar-red">{error}</span>}
 

@@ -1,12 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision'
+import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
 
 const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite'
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 
 // One camera analysed per tick, round-robin across the four feeds.
-const DETECT_INTERVAL_MS = 160
+const DETECT_INTERVAL_MS = 80
 
 export interface FaceBox {
   /** Normalised 0..1 within the camera frame. */
@@ -15,13 +15,17 @@ export interface FaceBox {
   w: number
   h: number
   score: number
+  /** Mouth openness 0..1 (MediaPipe `jawOpen` blendshape) — drives speaker detection. */
+  mouthOpen: number
+  /** The full landmark mesh — interleaved normalised x,y pairs. For the AI overlay. */
+  landmarks: Float32Array
 }
 
 export interface CameraAnalysis {
   faces: FaceBox[]
   people: number
-  /** The biggest face — the likely subject. Centre + size, normalised. */
-  primary: { cx: number; cy: number; size: number } | null
+  /** The biggest face — the likely subject. Centre + size + mouth, normalised. */
+  primary: { cx: number; cy: number; size: number; mouthOpen: number } | null
   updatedAt: number
 }
 
@@ -35,8 +39,10 @@ interface SceneContextValue {
 const Ctx = createContext<SceneContextValue | null>(null)
 
 /**
- * Per-camera person detection — runs MediaPipe FaceDetector round-robin over
- * the four camera feeds. Foundation for AI tracking and the AI Director.
+ * Per-camera face analysis — runs MediaPipe FaceLandmarker round-robin over the
+ * four camera feeds. As well as face boxes (for AI tracking and the AI overlay)
+ * it extracts mouth openness per face, which the AI Director correlates against
+ * the audio to work out who is speaking.
  */
 export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
   const { videoEls } = useCameraStreams()
@@ -46,7 +52,7 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    let detector: FaceDetector | null = null
+    let landmarker: FaceLandmarker | null = null
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let cam = 0
@@ -56,7 +62,12 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
       let primary: CameraAnalysis['primary'] = null
       if (faces.length) {
         const big = faces.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a))
-        primary = { cx: big.x + big.w / 2, cy: big.y + big.h / 2, size: Math.max(big.w, big.h) }
+        primary = {
+          cx: big.x + big.w / 2,
+          cy: big.y + big.h / 2,
+          size: Math.max(big.w, big.h),
+          mouthOpen: big.mouthOpen,
+        }
       }
       setAnalysis(prev => {
         const next = prev.slice()
@@ -66,25 +77,39 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
     }
 
     const loop = () => {
-      if (cancelled || !detector) return
+      if (cancelled || !landmarker) return
       const v = videoEls.current[cam]
       if (v && v.readyState >= 2 && v.videoWidth > 0) {
         try {
-          const res = detector.detect(v)
-          const faces: FaceBox[] = res.detections.map(d => {
-            const bb = d.boundingBox!
-            return {
-              x: bb.originX / v.videoWidth,
-              y: bb.originY / v.videoHeight,
-              w: bb.width / v.videoWidth,
-              h: bb.height / v.videoHeight,
-              score: d.categories?.[0]?.score ?? 1,
+          const res = landmarker.detect(v)
+          const lms = res.faceLandmarks ?? []
+          const blends = res.faceBlendshapes ?? []
+          const faces: FaceBox[] = lms.map((lm, k) => {
+            // Derive a face box from the landmark mesh extents, and keep the
+            // mesh itself (interleaved x,y) for the AI overlay to draw.
+            let minX = 1, minY = 1, maxX = 0, maxY = 0
+            const landmarks = new Float32Array(lm.length * 2)
+            for (let p = 0; p < lm.length; p++) {
+              const lx = lm[p].x, ly = lm[p].y
+              landmarks[p * 2] = lx
+              landmarks[p * 2 + 1] = ly
+              if (lx < minX) minX = lx
+              if (lx > maxX) maxX = lx
+              if (ly < minY) minY = ly
+              if (ly > maxY) maxY = ly
             }
+            // Pad so the box reads as a head, not a tight feature mesh.
+            const padX = (maxX - minX) * 0.08
+            const padY = (maxY - minY) * 0.14
+            minX = Math.max(0, minX - padX); maxX = Math.min(1, maxX + padX)
+            minY = Math.max(0, minY - padY); maxY = Math.min(1, maxY + padY)
+            const jaw = blends[k]?.categories?.find(c => c.categoryName === 'jawOpen')?.score ?? 0
+            return { x: minX, y: minY, w: maxX - minX, h: maxY - minY, score: 1, mouthOpen: jaw, landmarks }
           })
           updateCamera(cam, faces)
           if (!logged) {
             logged = true
-            console.log(`[scene] detection running — cam${cam}: ${faces.length} face(s)`)
+            console.log(`[scene] analysis running — cam${cam}: ${faces.length} face(s)`)
           }
         } catch (e) {
           if (!logged) {
@@ -100,23 +125,25 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
     ;(async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_BASE)
-        detector = await FaceDetector.createFromOptions(vision, {
+        landmarker = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
           runningMode: 'IMAGE',
+          numFaces: 5,
+          outputFaceBlendshapes: true,
         })
-        if (cancelled) { detector.close(); return }
-        console.log('[scene] face detector ready')
+        if (cancelled) { landmarker.close(); return }
+        console.log('[scene] face landmarker ready')
         setReady(true)
         loop()
       } catch (e) {
-        console.error('[scene] face detector init failed:', (e as Error).message)
+        console.error('[scene] face landmarker init failed:', (e as Error).message)
       }
     })()
 
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
-      detector?.close()
+      landmarker?.close()
     }
   }, [videoEls])
 

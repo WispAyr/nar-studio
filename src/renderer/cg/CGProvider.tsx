@@ -6,6 +6,9 @@ const studio = (window as any).studio
 
 const DEFAULT_BLEND: GlobalCompositeOperation = 'source-over'
 
+/** Exit-animation length — kept in step with the compositor's LAYER_OUT_MS. */
+const LAYER_EXIT_MS = 380
+
 export const TITLE_TEMPLATES: { template: TitleTemplate; label: string }[] = [
   { template: 'show-lower-third', label: 'Show Lower-Third' },
   { template: 'up-next', label: 'Up Next' },
@@ -34,6 +37,8 @@ let layerSeq = 0
 export function CGProvider({ children }: { children: ReactNode }) {
   const [assets, setAssets] = useState<Record<string, CgAsset[]>>({})
   const [layers, setLayers] = useState<CgLayer[]>([])
+  const layersRef = useRef<CgLayer[]>([])
+  layersRef.current = layers
   const elements = useRef<Map<string, CgElement>>(new Map())
 
   const refresh = useCallback(() => {
@@ -46,50 +51,74 @@ export function CGProvider({ children }: { children: ReactNode }) {
     return () => unsub?.()
   }, [refresh])
 
-  const toggleLayer = useCallback((asset: CgAsset) => {
-    setLayers(prev => {
-      const existing = prev.find(l => l.kind !== 'title' && l.category === asset.category && l.name === asset.name)
-      if (existing) {
-        elements.current.delete(existing.id)
-        return prev.filter(l => l.id !== existing.id)
-      }
-      return [...prev, {
-        id: `layer-${++layerSeq}`,
-        kind: asset.kind,
-        name: asset.name,
-        category: asset.category,
-        url: asset.url,
-        opacity: 1,
-        blend: DEFAULT_BLEND,
-      }]
-    })
+  // Start a layer's exit animation, then prune it once the animation is done.
+  // Re-toggling during the exit cancels removal, so the timeout re-checks state.
+  const beginRemove = useCallback((id: string) => {
+    setLayers(prev => prev.map(l => (l.id === id && l.removingAt == null ? { ...l, removingAt: performance.now() } : l)))
+    window.setTimeout(() => {
+      setLayers(prev => {
+        const done = prev.some(l =>
+          l.id === id && l.removingAt != null && performance.now() - l.removingAt >= LAYER_EXIT_MS)
+        if (!done) return prev
+        elements.current.delete(id)
+        return prev.filter(l => l.id !== id)
+      })
+    }, LAYER_EXIT_MS + 90)
   }, [])
+
+  const toggleLayer = useCallback((asset: CgAsset) => {
+    const existing = layersRef.current.find(
+      l => l.kind !== 'title' && l.category === asset.category && l.name === asset.name)
+    if (existing) {
+      if (existing.removingAt != null) {
+        // Mid-exit — bring it back rather than removing.
+        setLayers(prev => prev.map(l => (l.id === existing.id ? { ...l, removingAt: null, addedAt: performance.now() } : l)))
+      } else {
+        beginRemove(existing.id)
+      }
+      return
+    }
+    setLayers(prev => [...prev, {
+      id: `layer-${++layerSeq}`,
+      kind: asset.kind,
+      name: asset.name,
+      category: asset.category,
+      url: asset.url,
+      opacity: 1,
+      blend: DEFAULT_BLEND,
+      addedAt: performance.now(),
+      removingAt: null,
+    }])
+  }, [beginRemove])
 
   const toggleTitle = useCallback((template: TitleTemplate) => {
-    setLayers(prev => {
-      const existing = prev.find(l => l.kind === 'title' && l.template === template)
-      if (existing) {
-        elements.current.delete(existing.id)
-        return prev.filter(l => l.id !== existing.id)
+    const existing = layersRef.current.find(l => l.kind === 'title' && l.template === template)
+    if (existing) {
+      if (existing.removingAt != null) {
+        setLayers(prev => prev.map(l => (l.id === existing.id ? { ...l, removingAt: null, addedAt: performance.now() } : l)))
+      } else {
+        beginRemove(existing.id)
       }
-      const label = TITLE_TEMPLATES.find(t => t.template === template)?.label ?? template
-      return [...prev, {
-        id: `layer-${++layerSeq}`,
-        kind: 'title',
-        template,
-        name: label,
-        category: 'titles',
-        url: '',
-        opacity: 1,
-        blend: DEFAULT_BLEND,
-      }]
-    })
-  }, [])
+      return
+    }
+    const label = TITLE_TEMPLATES.find(t => t.template === template)?.label ?? template
+    setLayers(prev => [...prev, {
+      id: `layer-${++layerSeq}`,
+      kind: 'title',
+      template,
+      name: label,
+      category: 'titles',
+      url: '',
+      opacity: 1,
+      blend: DEFAULT_BLEND,
+      addedAt: performance.now(),
+      removingAt: null,
+    }])
+  }, [beginRemove])
 
   const removeLayer = useCallback((id: string) => {
-    elements.current.delete(id)
-    setLayers(prev => prev.filter(l => l.id !== id))
-  }, [])
+    beginRemove(id)
+  }, [beginRemove])
 
   const setOpacity = useCallback((id: string, opacity: number) => {
     setLayers(prev => prev.map(l => (l.id === id ? { ...l, opacity } : l)))

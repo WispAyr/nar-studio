@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useCameraControl, PRESET_COUNT, type Axis, type Mode } from '../../camera/useCameraControl'
+import { useAiTracking } from '../../ai/AiTrackingProvider'
+import { useSegmentation, type BgMode } from '../../segmentation/SegmentationProvider'
 
 interface Props {
   index: number
@@ -7,7 +9,11 @@ interface Props {
 
 export function CameraControls({ index }: Props) {
   const cam = useCameraControl(index)
+  const { tracking, setTracking } = useAiTracking()
+  const { configs: bgConfigs, setConfig: setBgConfig } = useSegmentation()
   const [saveMode, setSaveMode] = useState(false)
+  const isTracking = tracking[index]
+  const bg = bgConfigs[index]
 
   if (!cam.available) {
     return (
@@ -28,6 +34,22 @@ export function CameraControls({ index }: Props) {
 
   return (
     <div className="flex flex-col gap-3 p-3 h-full overflow-y-auto">
+
+      {/* AI auto-track — steers pan/tilt to keep the detected subject framed */}
+      <section className="flex flex-col gap-1.5">
+        <SectionLabel>AI Auto-Track</SectionLabel>
+        <button
+          onClick={() => setTracking(index, !isTracking)}
+          className={`h-10 rounded text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
+            isTracking
+              ? 'bg-nar-green text-black'
+              : 'bg-surface-700 text-slate-300 hover:bg-surface-600 hover:text-white'
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${isTracking ? 'bg-black animate-pulse' : 'bg-slate-500'}`} />
+          {isTracking ? 'Tracking — On' : 'Tracking — Off'}
+        </button>
+      </section>
 
       {/* Pan / Tilt */}
       <section className="flex flex-col gap-1.5">
@@ -172,6 +194,48 @@ export function CameraControls({ index }: Props) {
           </div>
         )}
         <ModeRow label="Focus" mode={cam.focusMode} onChange={cam.setFocus} />
+      </section>
+
+      {/* Background — live segmentation: green-screen-free blur or backdrop */}
+      <section className="flex flex-col gap-1.5">
+        <SectionLabel>Background</SectionLabel>
+        <div className="flex gap-1">
+          {(['off', 'blur', 'colour', 'viz'] as BgMode[]).map(m => (
+            <button
+              key={m}
+              onClick={() => setBgConfig(index, { mode: m })}
+              className={`flex-1 text-xs py-1 rounded capitalize transition-colors ${
+                bg.mode === m ? 'bg-nar-blue text-white' : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        {bg.mode === 'viz' && (
+          <span className="text-xs text-slate-600">Live music visualizer — set the look in the Viz tab.</span>
+        )}
+        {bg.mode === 'blur' && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 w-10">Blur</span>
+            <input
+              type="range" min={4} max={40} value={bg.blur}
+              onChange={e => setBgConfig(index, { blur: Number(e.target.value) })}
+              className="flex-1 accent-nar-blue"
+            />
+            <span className="text-xs text-slate-400 w-8 text-right tabular-nums">{bg.blur}</span>
+          </div>
+        )}
+        {bg.mode === 'colour' && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 w-10">Colour</span>
+            <input
+              type="color" value={bg.colour}
+              onChange={e => setBgConfig(index, { colour: e.target.value })}
+              className="flex-1 h-7 rounded bg-surface-800 border border-surface-600 cursor-pointer"
+            />
+          </div>
+        )}
       </section>
     </div>
   )

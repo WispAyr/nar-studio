@@ -8,7 +8,7 @@ const ENGINES: { id: EngineId; label: string }[] = [
 ]
 
 export function StatusBar() {
-  const { engineId, setEngineId, connected, recording, streaming } = useEngine()
+  const { engineId, setEngineId, connected, recording, streamStatus } = useEngine()
   const { sources } = useCameraStreams()
   const liveCams = sources.filter(s => s.hasSignal).length
 
@@ -54,10 +54,18 @@ export function StatusBar() {
           <span className="text-nar-red font-bold">REC</span>
         </div>
       )}
-      {streaming && (
+      {streamStatus !== 'idle' && (
         <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-nar-red animate-pulse" />
-          <span className="text-nar-red font-bold">LIVE</span>
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+            streamStatus === 'reconnecting' ? 'bg-nar-amber' : 'bg-nar-red'
+          }`} />
+          <span className={`font-bold ${
+            streamStatus === 'reconnecting' ? 'text-nar-amber' : 'text-nar-red'
+          }`}>
+            {streamStatus === 'live' ? 'LIVE'
+              : streamStatus === 'reconnecting' ? 'RECONNECTING'
+              : 'STREAM LOST'}
+          </span>
         </div>
       )}
 
