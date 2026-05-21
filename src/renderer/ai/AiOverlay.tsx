@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { FaceLandmarker } from '@mediapipe/tasks-vision'
+import { FaceLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision'
 import { useSceneAnalysis } from './SceneAnalysisProvider'
 import { useAiTracking } from './AiTrackingProvider'
 import { useRecognition } from './RecognitionProvider'
@@ -18,6 +18,8 @@ const FEATURES: Conn[] = [
   ...(FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS as Conn[]),
   ...(FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS as Conn[]),
 ]
+// Body-pose skeleton connections — shoulders, arms, torso, legs.
+const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS as Conn[]
 
 /**
  * Visualises what the scene-analysis AI sees for one camera — the MediaPipe
@@ -78,7 +80,7 @@ export function AiOverlay({ index }: { index: number }) {
 
       const ctx = cv.getContext('2d')!
       ctx.clearRect(0, 0, w, h)
-      if (!a || a.faces.length === 0) return
+      if (!a || (a.faces.length === 0 && a.poses.length === 0)) return
 
       // The video is 16:9, shown object-contain — find its letterboxed rect.
       let cw = w
@@ -166,9 +168,30 @@ export function AiOverlay({ index }: { index: number }) {
         }
       }
 
+      // Body-pose skeletons — drawn in amber so they read distinctly from the
+      // blue/green face mesh. Shows everyone the pose model found, face or not.
+      ctx.lineCap = 'round'
+      for (const ps of a.poses) {
+        const lm = ps.landmarks
+        if (!lm || lm.length < 4) continue
+        ctx.strokeStyle = 'rgba(251,191,36,0.9)'
+        ctx.lineWidth = 2.5
+        ctx.shadowColor = 'rgba(251,191,36,0.6)'
+        ctx.shadowBlur = 6
+        drawConns(ctx, lm, POSE_CONNECTIONS, ox, oy, cw, ch)
+        ctx.shadowBlur = 0
+        ctx.fillStyle = '#fbbf24'
+        for (let p = 0; p < lm.length; p += 2) {
+          ctx.beginPath()
+          ctx.arc(ox + lm[p] * cw, oy + lm[p + 1] * ch, 2.4, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+      ctx.lineCap = 'butt'
+
       // Count chip.
       ctx.font = '600 11px sans-serif'
-      const label = `${a.faces.length} seen${isTracking ? ' · tracking' : ''}`
+      const label = `${a.people} seen${isTracking ? ' · tracking' : ''}`
       const tw = ctx.measureText(label).width
       ctx.fillStyle = isTracking ? 'rgba(34,197,94,0.85)' : 'rgba(59,130,246,0.85)'
       ctx.fillRect(ox + 4, oy + 4, tw + 12, 18)

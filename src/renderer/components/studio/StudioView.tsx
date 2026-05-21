@@ -153,17 +153,17 @@ export function StudioView({ onExit }: { onExit: () => void }) {
         const colour = CAM_COLOURS[i]
         const a = analysisRef.current[i]
         if (!a) return
-        const seen: { cx: number; dist: number }[] = []
+        const seen: { cx: number; dist: number; kind: 'face' | 'body' }[] = []
         for (const f of a.faces) {
           const cx = f.x + f.w / 2
           const dist = clamp(diag * 0.085 / Math.max(0.05, f.h || f.w), diag * 0.06, diag * 0.58)
-          seen.push({ cx, dist })
+          seen.push({ cx, dist, kind: 'face' })
         }
         for (const ps of a.poses) {
           // skip a body that lines up with a face already drawn
-          if (seen.some(s => Math.abs(s.cx - ps.cx) < 0.12)) continue
+          if (seen.some(s => Math.abs(s.cx - ps.shoulderX) < 0.12)) continue
           const dist = clamp(diag * 0.34 / Math.max(0.1, ps.h), diag * 0.06, diag * 0.58)
-          seen.push({ cx: ps.shoulderX, dist })
+          seen.push({ cx: ps.shoulderX, dist, kind: 'body' })
         }
         for (const s of seen) {
           const bearing = c.angle + (s.cx - 0.5) * FOV
@@ -172,8 +172,15 @@ export function StudioView({ onExit }: { onExit: () => void }) {
           ctx.strokeStyle = colour + '55'
           ctx.lineWidth = 1.5
           ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(ex, ey); ctx.stroke()
-          ctx.fillStyle = colour + 'aa'
-          ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fill()
+          if (s.kind === 'face') {
+            ctx.fillStyle = colour + 'cc'
+            ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, Math.PI * 2); ctx.fill()
+          } else {
+            // body-only (pose) detection — a hollow ring
+            ctx.strokeStyle = colour + 'cc'
+            ctx.lineWidth = 2
+            ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.stroke()
+          }
         }
       })
 
@@ -320,7 +327,8 @@ export function StudioView({ onExit }: { onExit: () => void }) {
           />
           <div className="absolute bottom-2 left-2 flex flex-col gap-0.5 pointer-events-none">
             <span className="text-[10px] text-slate-500">
-              Sightlines show every detected person; a solid dot is a recognised
+              Sightlines show every detection — a filled dot is a face, a ring is
+              a body (face turned away). A large named dot is a recognised
               presenter fixed by two or more cameras.
             </span>
             <span className="text-[10px] text-slate-700">

@@ -20,6 +20,8 @@ export interface PoseBox {
   shoulderX: number
   /** Mean landmark visibility 0..1. */
   score: number
+  /** The 33 pose landmarks — interleaved normalised x,y pairs. For the overlay. */
+  landmarks: Float32Array
 }
 
 interface PosePoint { x: number; y: number; visibility?: number }
@@ -37,12 +39,16 @@ export function resultToPoses(res: PoseResultLike): PoseBox[] {
     if (!lm.length) continue
     let minX = 1, minY = 1, maxX = 0, maxY = 0
     let visSum = 0, visN = 0
-    for (const p of lm) {
-      if (p.x < minX) minX = p.x
-      if (p.x > maxX) maxX = p.x
-      if (p.y < minY) minY = p.y
-      if (p.y > maxY) maxY = p.y
-      if (typeof p.visibility === 'number') { visSum += p.visibility; visN += 1 }
+    const landmarks = new Float32Array(lm.length * 2)
+    for (let p = 0; p < lm.length; p++) {
+      const pt = lm[p]
+      landmarks[p * 2] = pt.x
+      landmarks[p * 2 + 1] = pt.y
+      if (pt.x < minX) minX = pt.x
+      if (pt.x > maxX) maxX = pt.x
+      if (pt.y < minY) minY = pt.y
+      if (pt.y > maxY) maxY = pt.y
+      if (typeof pt.visibility === 'number') { visSum += pt.visibility; visN += 1 }
     }
     minX = Math.max(0, minX); minY = Math.max(0, minY)
     maxX = Math.min(1, maxX); maxY = Math.min(1, maxY)
@@ -55,6 +61,7 @@ export function resultToPoses(res: PoseResultLike): PoseBox[] {
       cx: minX + w / 2, cy: minY + h / 2,
       shoulderX: Math.min(1, Math.max(0, shoulderX)),
       score: visN ? visSum / visN : 1,
+      landmarks,
     })
   }
   return out
