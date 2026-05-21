@@ -7,11 +7,14 @@ import { RecordingPanel } from './components/recording/RecordingPanel'
 import { StreamPanel } from './components/stream/StreamPanel'
 import { VideoRouter } from './components/router/VideoRouter'
 import { StatusBar } from './components/layout/StatusBar'
+import { VisualizerPanel } from './components/visualizer/VisualizerPanel'
 import { useCameras } from './hooks/useCameras'
 
-type RightTab = 'router' | 'stream' | 'recording'
+type MainView  = 'cameras' | 'visualizer'
+type RightTab  = 'router' | 'stream' | 'recording'
 
 export default function App() {
+  const [mainView, setMainView] = useState<MainView>('cameras')
   const [selectedCamera, setSelectedCamera] = useState(0)
   const [rightTab, setRightTab] = useState<RightTab>('router')
   const { cameras } = useCameras()
@@ -35,12 +38,39 @@ export default function App() {
       {/* Main area */}
       <div className="flex flex-1 min-h-0 gap-1 p-1">
 
-        {/* Left: 2×2 multiview */}
-        <div className="flex-1 min-w-0">
-          <MultiviewGrid
-            selectedCamera={selectedCamera}
-            onSelectCamera={setSelectedCamera}
-          />
+        {/* Left: view switcher + content */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+
+          {/* View toggle — CAMERAS / VISUALIZER */}
+          <div className="flex items-center gap-1 shrink-0">
+            {([
+              { id: 'cameras',    label: 'CAMERAS' },
+              { id: 'visualizer', label: 'VISUALIZER' },
+            ] as { id: MainView; label: string }[]).map(v => (
+              <button
+                key={v.id}
+                onClick={() => setMainView(v.id)}
+                className={`px-3 py-1 text-xs font-bold tracking-widest rounded transition-colors ${
+                  mainView === v.id
+                    ? 'bg-nar-red text-white'
+                    : 'bg-surface-800 text-slate-500 hover:text-slate-300 border border-surface-700'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Active view */}
+          <div className="flex-1 min-h-0">
+            {mainView === 'cameras' && (
+              <MultiviewGrid
+                selectedCamera={selectedCamera}
+                onSelectCamera={setSelectedCamera}
+              />
+            )}
+            {mainView === 'visualizer' && <VisualizerPanel />}
+          </div>
         </div>
 
         {/* Right sidebar */}

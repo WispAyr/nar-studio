@@ -1,4 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+
+// Enable WebGPU (Vulkan backend) in Chromium — required for the visualizer engine
+app.commandLine.appendSwitch('enable-features', 'WebGPU,Vulkan,UseSkiaRenderer')
+app.commandLine.appendSwitch('enable-unsafe-webgpu')
 import path from 'path'
 import { registerIpcHandlers } from './ipc'
 import { obsManager } from './obs'
