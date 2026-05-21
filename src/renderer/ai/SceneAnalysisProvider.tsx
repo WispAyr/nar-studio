@@ -5,22 +5,12 @@ import {
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
 import { localMediapipe, CDN_WASM, CDN_FACE_MODEL } from '../mediapipe'
+import { resultToFaces, type FaceBox } from './faceLandmarks'
+
+export type { FaceBox } from './faceLandmarks'
 
 // One camera analysed per tick, round-robin across the four feeds.
 const DETECT_INTERVAL_MS = 80
-
-export interface FaceBox {
-  /** Normalised 0..1 within the camera frame. */
-  x: number
-  y: number
-  w: number
-  h: number
-  score: number
-  /** Mouth openness 0..1 (MediaPipe `jawOpen` blendshape) — drives speaker detection. */
-  mouthOpen: number
-  /** The full landmark mesh — interleaved normalised x,y pairs. For the AI overlay. */
-  landmarks: Float32Array
-}
 
 export interface CameraAnalysis {
   faces: FaceBox[]
@@ -44,11 +34,15 @@ interface SceneContextValue {
 const Ctx = createContext<SceneContextValue | null>(null)
 
 /**
- * Per-camera face analysis — runs MediaPipe FaceLandmarker round-robin over the
- * four camera feeds. As well as face boxes (for AI tracking and the AI overlay)
- * it extracts mouth openness per face, which the AI Director correlates against
- * the audio to work out who is speaking. Results are published into a ref so
- * the detection rate costs nothing in React renders.
+ * Per-camera face analysis. MediaPipe FaceLandmarker runs round-robin over the
+ * four camera feeds in a Web Worker — the expensive detect() is kept off the
+ * renderer thread so the compositor and UI never stall. If the worker cannot
+ * start it transparently falls back to detecting on the main thread.
+ *
+ * As well as face boxes (for AI tracking and the AI overlay) it extracts mouth
+ * openness per face, which the AI Director correlates against the audio to work
+ * out who is speaking. Results are published into a ref so the detection rate
+ * costs nothing in React renders.
  */
 export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
   const { videoEls } = useCameraStreams()
@@ -58,11 +52,11 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    let landmarker: FaceLandmarker | null = null
     let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
     let cam = 0
     let logged = false
+    let usingFallback = false
+    const cleanups: Array<() => void> = []
 
     const updateCamera = (idx: number, faces: FaceBox[]) => {
       let primary: CameraAnalysis['primary'] = null
@@ -79,102 +73,158 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
       analysisRef.current[idx] = { faces, people: faces.length, primary, updatedAt: Date.now() }
     }
 
-    const detect = (idx: number, v: HTMLVideoElement) => {
-      try {
-        const res = landmarker!.detect(v)
-        const lms = res.faceLandmarks ?? []
-        const blends = res.faceBlendshapes ?? []
-        const faces: FaceBox[] = lms.map((lm, k) => {
-          // Derive a face box from the landmark mesh extents, and keep the
-          // mesh itself (interleaved x,y) for the AI overlay to draw.
-          let minX = 1, minY = 1, maxX = 0, maxY = 0
-          const landmarks = new Float32Array(lm.length * 2)
-          for (let p = 0; p < lm.length; p++) {
-            const lx = lm[p].x, ly = lm[p].y
-            landmarks[p * 2] = lx
-            landmarks[p * 2 + 1] = ly
-            if (lx < minX) minX = lx
-            if (lx > maxX) maxX = lx
-            if (ly < minY) minY = ly
-            if (ly > maxY) maxY = ly
-          }
-          // Pad so the box reads as a head, not a tight feature mesh.
-          const padX = (maxX - minX) * 0.08
-          const padY = (maxY - minY) * 0.14
-          minX = Math.max(0, minX - padX); maxX = Math.min(1, maxX + padX)
-          minY = Math.max(0, minY - padY); maxY = Math.min(1, maxY + padY)
-          const jaw = blends[k]?.categories?.find(c => c.categoryName === 'jawOpen')?.score ?? 0
-          return { x: minX, y: minY, w: maxX - minX, h: maxY - minY, score: 1, mouthOpen: jaw, landmarks }
+    // The next camera (scanning from `cam`) with a live frame, or -1. Dead
+    // slots are skipped at no cost, so live feeds get analysed more often.
+    const nextLiveCam = (): number => {
+      for (let n = 0; n < 4; n++) {
+        const i = (cam + n) % 4
+        const v = videoEls.current[i]
+        if (v && v.readyState >= 2 && v.videoWidth > 0) { cam = (i + 1) % 4; return i }
+      }
+      return -1
+    }
+
+    const markRunning = (where: string, idx: number, n: number) => {
+      if (logged) return
+      logged = true
+      console.log(`[scene] analysis running (${where}) — cam${idx}: ${n} face(s)`)
+    }
+
+    // ── main-thread fallback — used only if the worker cannot start ──────────
+    const runOnMainThread = () => {
+      if (cancelled) return
+      let landmarker: FaceLandmarker | null = null
+      let timer: ReturnType<typeof setTimeout> | null = null
+      cleanups.push(() => { if (timer) clearTimeout(timer); landmarker?.close() })
+
+      const createLandmarker = async (wasmBase: string, modelPath: string) => {
+        const vision = await FilesetResolver.forVisionTasks(wasmBase)
+        return FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
+          runningMode: 'IMAGE',
+          numFaces: 5,
+          outputFaceBlendshapes: true,
         })
-        updateCamera(idx, faces)
-        if (!logged) {
-          logged = true
-          console.log(`[scene] analysis running — cam${idx}: ${faces.length} face(s)`)
-        }
-      } catch (e) {
-        if (!logged) {
-          logged = true
-          console.warn('[scene] detect failed:', (e as Error).message)
-        }
       }
-    }
 
-    const loop = () => {
-      if (cancelled || !landmarker) return
-      // Skip cameras with no live frame at no cost, so the feeds that ARE live
-      // get analysed proportionally more often (better tracking, same budget).
-      let scanned = 0
-      while (scanned < 4) {
-        const v = videoEls.current[cam]
-        if (v && v.readyState >= 2 && v.videoWidth > 0) {
-          detect(cam, v)
-          cam = (cam + 1) % 4
-          timer = setTimeout(loop, DETECT_INTERVAL_MS)
-          return
+      const loop = () => {
+        if (cancelled || !landmarker) return
+        const idx = nextLiveCam()
+        if (idx >= 0) {
+          const v = videoEls.current[idx]!
+          try {
+            updateCamera(idx, resultToFaces(landmarker.detect(v)))
+            markRunning('main thread', idx, analysisRef.current[idx].faces.length)
+          } catch (e) {
+            if (!logged) { logged = true; console.warn('[scene] detect failed:', (e as Error).message) }
+          }
         }
-        cam = (cam + 1) % 4
-        scanned++
+        timer = setTimeout(loop, DETECT_INTERVAL_MS)
       }
-      // No camera has a live frame — check back at the normal interval.
-      timer = setTimeout(loop, DETECT_INTERVAL_MS)
-    }
 
-    const createLandmarker = async (wasmBase: string, modelPath: string) => {
-      const vision = await FilesetResolver.forVisionTasks(wasmBase)
-      return FaceLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
-        runningMode: 'IMAGE',
-        numFaces: 5,
-        outputFaceBlendshapes: true,
-      })
-    }
-
-    ;(async () => {
-      // Local bundled assets first (fast, offline); fall back to the CDN.
-      try {
-        landmarker = await createLandmarker(localMediapipe('wasm'), localMediapipe('face_landmarker.task'))
-        if (cancelled) { landmarker.close(); return }
-        console.log('[scene] face landmarker ready (local assets)')
-      } catch (e) {
-        if (cancelled) return
-        console.warn('[scene] local assets unavailable — using CDN:', (e as Error).message)
+      ;(async () => {
         try {
-          landmarker = await createLandmarker(CDN_WASM, CDN_FACE_MODEL)
+          landmarker = await createLandmarker(localMediapipe('wasm'), localMediapipe('face_landmarker.task'))
           if (cancelled) { landmarker.close(); return }
-          console.log('[scene] face landmarker ready (CDN)')
-        } catch (e2) {
-          console.error('[scene] face landmarker init failed:', (e2 as Error).message)
-          return
+          console.log('[scene] face landmarker ready (main thread, local assets)')
+        } catch {
+          if (cancelled) return
+          try {
+            landmarker = await createLandmarker(CDN_WASM, CDN_FACE_MODEL)
+            if (cancelled) { landmarker.close(); return }
+            console.log('[scene] face landmarker ready (main thread, CDN)')
+          } catch (e2) {
+            console.error('[scene] face landmarker init failed:', (e2 as Error).message)
+            return
+          }
+        }
+        setReady(true)
+        loop()
+      })()
+    }
+
+    // ── worker path — detection runs off the renderer thread ────────────────
+    const runWithWorker = (): boolean => {
+      let worker: Worker
+      try {
+        worker = new Worker(new URL('./detectionWorker.ts', import.meta.url), { type: 'module' })
+      } catch (e) {
+        console.warn('[scene] detection worker unavailable:', (e as Error).message)
+        return false
+      }
+      let workerReady = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let initTimeout: ReturnType<typeof setTimeout> | null = null
+
+      const fallback = (why: string) => {
+        if (usingFallback || cancelled) return
+        usingFallback = true
+        console.warn('[scene] detection worker failed — using the main thread:', why)
+        if (timer) clearTimeout(timer)
+        if (initTimeout) clearTimeout(initTimeout)
+        try { worker.terminate() } catch { /* ignore */ }
+        runOnMainThread()
+      }
+
+      const schedule = () => { timer = setTimeout(tick, DETECT_INTERVAL_MS) }
+
+      const tick = async () => {
+        if (cancelled || usingFallback) return
+        const idx = nextLiveCam()
+        if (idx < 0) { schedule(); return }
+        const v = videoEls.current[idx]!
+        try {
+          // Grab the frame as a transferable ImageBitmap (zero-copy hand-off).
+          const bitmap = await createImageBitmap(v)
+          if (cancelled || usingFallback) { bitmap.close(); return }
+          worker.postMessage({ type: 'detect', cam: idx, bitmap }, [bitmap])
+        } catch {
+          schedule()   // frame grab failed — skip this camera, carry on
         }
       }
-      setReady(true)
-      loop()
-    })()
+
+      worker.onmessage = (e: MessageEvent) => {
+        const msg = e.data
+        if (msg.type === 'ready') {
+          workerReady = true
+          if (initTimeout) clearTimeout(initTimeout)
+          console.log(`[scene] face detection worker ready (${msg.delegate})`)
+          setReady(true)
+          tick()
+        } else if (msg.type === 'error') {
+          fallback(msg.message || 'worker reported an error')
+        } else if (msg.type === 'result') {
+          if (cancelled || usingFallback) return
+          updateCamera(msg.cam, msg.faces)
+          markRunning('worker', msg.cam, msg.faces.length)
+          schedule()   // the next detection is paced from the result
+        }
+      }
+      worker.onerror = () => fallback('worker crashed')
+
+      worker.postMessage({
+        type: 'init',
+        localWasm: localMediapipe('wasm'),
+        localModel: localMediapipe('face_landmarker.task'),
+        cdnWasm: CDN_WASM,
+        cdnModel: CDN_FACE_MODEL,
+      })
+      // If the worker never reports ready, fall back rather than hang.
+      initTimeout = setTimeout(() => { if (!workerReady) fallback('init timed out') }, 12000)
+
+      cleanups.push(() => {
+        if (timer) clearTimeout(timer)
+        if (initTimeout) clearTimeout(initTimeout)
+        try { worker.terminate() } catch { /* ignore */ }
+      })
+      return true
+    }
+
+    if (!runWithWorker()) runOnMainThread()
 
     return () => {
       cancelled = true
-      if (timer) clearTimeout(timer)
-      landmarker?.close()
+      cleanups.forEach(fn => fn())
     }
   }, [videoEls])
 

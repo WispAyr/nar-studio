@@ -44,6 +44,10 @@ export default defineConfig({
   css: {
     postcss: './postcss.config.js',
   },
+  // The face-detection worker is an ES module (it imports MediaPipe).
+  worker: {
+    format: 'es',
+  },
   build: {
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
