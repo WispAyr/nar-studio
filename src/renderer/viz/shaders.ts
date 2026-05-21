@@ -1,8 +1,8 @@
 // GLSL ES 3.00 — multi-pass audio-reactive visualizer.
 //
 // Pipeline:  scene (with frame-feedback) → bright-pass → blur ×4 → composite.
-// The scene shader carries ten modes branched by uMode: six artistic shader
-// modes and four broadcast meter modes (spectrum / VU / waveform / radial).
+// The scene shader carries 23 modes branched by uMode — geometric neon looks,
+// artistic flow fields, raymarched 3D, and broadcast meters.
 
 export const VERT_SRC = `#version 300 es
 void main() {
@@ -572,6 +572,153 @@ vec3 mOrbits(vec2 uv) {
   return col * (0.7 + 0.6 * uLevel);
 }
 
+// ── Mode 19: Liquid — raymarched chrome metaball (premium keynote look) ─────
+float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+float liqMap(vec3 p) {
+  p.xz *= rot(uTime * 0.25);
+  p.xy *= rot(uTime * 0.17);
+  float k = 0.45 + 0.40 * uBass;                       // bass makes it gooier
+  float d = sdSphere(p, 0.66 + 0.20 * uBeat);
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float ph = uTime * (0.55 + fi * 0.23) + fi * 1.9;
+    vec3 o = vec3(sin(ph), cos(ph * 1.3), sin(ph * 0.7)) * (0.55 + 0.45 * uMid);
+    float rr = 0.26 + 0.10 * sin(uTime * 1.4 + fi * 2.1) + 0.14 * uTreble;
+    d = smin(d, sdSphere(p - o, rr), k);
+  }
+  return d;
+}
+vec3 liqNormal(vec3 p) {
+  vec2 e = vec2(0.0012, 0.0);
+  return normalize(vec3(
+    liqMap(p + e.xyy) - liqMap(p - e.xyy),
+    liqMap(p + e.yxy) - liqMap(p - e.yxy),
+    liqMap(p + e.yyx) - liqMap(p - e.yyx)));
+}
+// studio environment — dark room, soft top key light, neon rim + fill
+vec3 liqEnv(vec3 rd) {
+  vec3 base = mix(vec3(0.012, 0.015, 0.028), vec3(0.055, 0.065, 0.110), rd.y * 0.5 + 0.5);
+  float key = pow(max(0.0, dot(rd, normalize(vec3(0.30, 0.82, -0.40)))), 8.0);
+  base += vec3(1.0, 0.97, 0.92) * key * 0.95;
+  float rim = pow(max(0.0, dot(rd, normalize(vec3(-0.62, -0.18, 0.55)))), 4.0);
+  base += palette(0.72) * rim * 0.65;
+  float fill = pow(max(0.0, dot(rd, normalize(vec3(0.5, -0.5, -0.2)))), 3.0);
+  base += palette(0.32) * fill * 0.30;
+  return base;
+}
+vec3 mLiquid(vec2 uv) {
+  vec3 ro = vec3(0.0, 0.0, -3.0);
+  vec3 rd = normalize(vec3(uv * 1.05, 1.5));
+  float t = 0.0, hit = 0.0;
+  for (int i = 0; i < 84; i++) {
+    vec3 p = ro + rd * t;
+    float d = liqMap(p);
+    if (d < 0.0015) { hit = 1.0; break; }
+    t += d * 0.86;
+    if (t > 8.0) break;
+  }
+  vec3 col;
+  if (hit > 0.5) {
+    vec3 p = ro + rd * t;
+    vec3 n = liqNormal(p);
+    vec3 refl = reflect(rd, n);
+    float fres = pow(1.0 - max(0.0, dot(n, -rd)), 3.0);
+    vec3 env = liqEnv(refl);
+    vec3 tint = mix(palette(0.28 + 0.42 * uCentroid), vec3(1.0), 0.35);
+    col = env * (0.45 + 0.55 * tint);
+    col += palette(0.86) * fres * (0.85 + 1.25 * uBeat);   // fresnel glow rim
+    float spe = pow(max(0.0, dot(refl, normalize(vec3(0.30, 0.82, -0.40)))), 64.0);
+    col += vec3(1.0, 0.98, 0.94) * spe * 1.6;              // hot specular
+  } else {
+    col = liqEnv(rd);
+  }
+  return col * (0.85 + 0.4 * uLevel);
+}
+
+// ── Mode 20: Starfield — volumetric 3D star warp ────────────────────────────
+vec3 mStarfield(vec2 uv) {
+  vec3 col = mix(vec3(0.010, 0.012, 0.024), vec3(0.028, 0.022, 0.050), uv.y * 0.5 + 0.5);
+  float speed = 0.5 + 1.8 * uBass + 2.4 * uBeat;
+  for (int i = 0; i < 80; i++) {
+    float fi = float(i);
+    float seed  = hash11(fi * 2.13 + 1.7);
+    float seed2 = hash11(fi * 1.31 + 8.4);
+    float z = fract(seed - uTime * speed * 0.035);         // 1 = far, 0 = at camera
+    float persp = 0.05 / (z * z + 0.05);                   // explodes near camera
+    vec2 dir = vec2(seed - 0.5, seed2 - 0.5);
+    vec2 pos = dir * persp * 1.9;
+    if (dot(pos, pos) > 4.0) continue;                     // off-screen — skip
+    float bright = (1.0 - z) * smoothstep(0.0, 0.10, z);
+    vec2 rd = normalize(pos + vec2(1e-4, 1e-4));
+    float along = dot(uv - pos, rd);
+    float side  = dot(uv - pos, vec2(-rd.y, rd.x));
+    float kAlong = mix(2600.0, 70.0, clamp((speed - 0.5) * 0.45, 0.0, 1.0));
+    float s = exp(-(side * side * 5600.0 + along * along * kAlong));
+    col += palette(0.5 + 0.34 * seed) * s * bright * 1.4;
+  }
+  return col * (0.85 + 0.5 * uLevel);
+}
+
+// ── Mode 21: Ribbon — flowing glossy neon audio ribbon ──────────────────────
+vec3 mRibbon(vec2 uv) {
+  vec3 col = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float depth = fi / 3.0;                                // 0 front .. 1 back
+    float scale = mix(1.0, 0.58, depth);
+    float x = uv.x * 0.5 + 0.5;
+    float w = (wave(fract(x * 0.5 + fi * 0.13 + uTime * 0.025)) - 0.5) * 2.0;
+    float flow = sin(uv.x * 2.4 + uTime * (0.55 + fi * 0.22) + fi * 2.1);
+    float cy = (0.11 * flow + 0.32 * w * (0.5 + uMid)) * scale + (depth - 0.4) * 0.06;
+    float thick = (0.020 + 0.05 * abs(w) + 0.03 * uLevel) * scale;
+    float d = abs(uv.y - cy);
+    float body = smoothstep(thick, thick * 0.18, d);
+    float grad = clamp((uv.y - cy) / thick * 0.5 + 0.5, 0.0, 1.0);
+    vec3 rc = palette(0.28 + 0.42 * grad + 0.16 * depth);
+    rc = mix(rc, vec3(1.0, 0.97, 0.92), smoothstep(0.55, 0.96, grad) * 0.75);  // sheen
+    col += rc * body * (0.7 + 0.6 * uLevel) * mix(1.0, 0.38, depth);
+    col += palette(0.86) * neon(d - thick, 0.012) * mix(1.0, 0.32, depth) * (0.55 + 0.9 * uBeat);
+  }
+  col += palette(0.06 + 0.30 * uBass) * exp(-abs(uv.y + 0.46) * 5.0) * (0.30 + 1.0 * uBass + 0.5 * uBeat);
+  return col * 1.05;
+}
+
+// ── Mode 22: Helix — rotating double-helix of spectrum nodes ────────────────
+vec3 mHelix(vec2 uv) {
+  vec3 col = vec3(0.0);
+  const int N = 34;
+  float spin = uTime * 0.55 + uBeatPhase * 0.5;
+  for (int i = 0; i < N; i++) {
+    float fi = float(i);
+    float t = fi / float(N - 1);                           // 0..1 along the strand
+    float y = (t - 0.5) * 1.55;
+    float ph = t * 9.0 + spin;
+    float band = pow(spec(t), 0.7);
+    float xA = sin(ph) * (0.32 + 0.07 * band);
+    float xB = sin(ph + 3.14159265) * (0.32 + 0.07 * band);
+    float depthA = cos(ph), depthB = cos(ph + 3.14159265);
+    float perspA = 0.78 + 0.34 * depthA;                   // front nodes larger
+    float perspB = 0.78 + 0.34 * depthB;
+    vec2 pA = vec2(xA, y) * perspA;
+    vec2 pB = vec2(xB, y) * perspB;
+    col += palette(0.6) * neon(segDist(uv, pA, pB), 0.006) * 0.22 * (0.4 + band);  // rung
+    float dA = length(uv - pA);
+    float rA = (0.013 + 0.05 * band) * perspA;
+    float nA = rA / (dA + rA); nA *= nA;
+    col += palette(0.22 + 0.5 * t + 0.2 * band) * nA * (0.4 + 1.9 * band) * (0.55 + 0.45 * depthA);
+    float dB = length(uv - pB);
+    float rB = (0.013 + 0.05 * band) * perspB;
+    float nB = rB / (dB + rB); nB *= nB;
+    col += palette(0.22 + 0.5 * t + 0.2 * band) * nB * (0.4 + 1.9 * band) * (0.55 + 0.45 * depthB);
+  }
+  col += palette(0.05 + 0.30 * uBass) * exp(-length(uv) * 3.0) * (0.22 + 0.9 * uBass + 0.5 * uBeat);
+  return col * (0.78 + 0.5 * uLevel);
+}
+
 void main() {
   vec2 frag = gl_FragCoord.xy;
   vec2 uv = (frag - 0.5 * uRes) / uRes.y;
@@ -596,6 +743,10 @@ void main() {
   else if (uMode == 16) fresh = mWaveRing(uv);
   else if (uMode == 17) fresh = mGrid(tuv);
   else if (uMode == 18) fresh = mOrbits(uv);
+  else if (uMode == 19) fresh = mLiquid(uv);
+  else if (uMode == 20) fresh = mStarfield(uv);
+  else if (uMode == 21) fresh = mRibbon(uv);
+  else if (uMode == 22) fresh = mHelix(uv);
   else fresh = mNebula(uv);
 
   // Per-mode frame feedback — light trails for the flow modes, heavy
@@ -606,6 +757,8 @@ void main() {
   else if (uMode == 12){ fbAmt = 0.20;  fbZoom = 0.994; fbRot = 0.0; }
   else if (uMode == 15){ fbAmt = 0.45;  fbZoom = 1.0;   fbRot = 0.0; }  // scope phosphor trail
   else if (uMode == 0) { fbAmt = 0.34;  fbZoom = 0.997; fbRot = 0.0016; }
+  else if (uMode == 20){ fbAmt = 0.38;  fbZoom = 1.0;   fbRot = 0.0; }  // starfield motion blur
+  else if (uMode == 19){ fbAmt = 0.16;  fbZoom = 0.999; fbRot = 0.0; }  // liquid — faint trail
 
   vec3 col = fresh;
   if (fbAmt > 0.0) {
@@ -754,4 +907,18 @@ uniform sampler2D uPrev;
 #define TIME uTime
 #define isf_FragNormCoord (gl_FragCoord.xy / uRes)
 #define texture2D texture
+// ── ShaderToy compatibility ────────────────────────────────────────────────
+#define iResolution vec3(uRes, 1.0)
+#define iTime uTime
+#define iGlobalTime uTime
+#define iTimeDelta 0.0166667
+#define iFrame 0
+#define iFrameRate 60.0
+#define iMouse vec4(0.0)
+#define iDate vec4(2026.0, 1.0, 1.0, 0.0)
+#define iSampleRate 48000.0
+#define iChannel0 uSpectrum
+#define iChannel1 uWave
+#define iChannel2 uPrev
+#define iChannel3 uPrev
 `

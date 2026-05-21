@@ -26,6 +26,7 @@ export const VIZ_MODES = [
   { id: 3, label: 'Raymarch', group: 'Artistic', hint: '3D audio-morphed lattice' },
   { id: 4, label: 'Fractal', group: 'Artistic', hint: 'Audio-driven Julia set' },
   { id: 5, label: 'Lightpaint', group: 'Artistic', hint: 'Feedback-buffer light trails' },
+  { id: 19, label: 'Liquid', group: 'Artistic', hint: 'Raymarched chrome metaball' },
   { id: 6, label: 'Spectrum', group: 'Meters', hint: 'Premium bar analyzer with peak-hold' },
   { id: 7, label: 'VU', group: 'Meters', hint: 'Stereo broadcast VU meters' },
   { id: 8, label: 'Waveform', group: 'Meters', hint: 'Live oscilloscope trace' },
@@ -34,6 +35,9 @@ export const VIZ_MODES = [
   { id: 16, label: 'Wave Ring', group: 'Meters', hint: 'Circular live waveform' },
   { id: 17, label: 'Grid', group: 'Meters', hint: 'LED video-wall spectrum matrix' },
   { id: 18, label: 'Orbits', group: 'Geometric', hint: 'Concentric orbiting node rings' },
+  { id: 20, label: 'Starfield', group: 'Geometric', hint: '3D volumetric star warp' },
+  { id: 21, label: 'Ribbon', group: 'Geometric', hint: 'Flowing glossy neon ribbon' },
+  { id: 22, label: 'Helix', group: 'Geometric', hint: 'Rotating double-helix of nodes' },
 ] as const
 
 export const VIZ_PALETTES = [
@@ -152,7 +156,12 @@ const SCENE_UNIFORMS = [
 /** Compile a user / ISF shader, wrapped so it runs in our WebGL2 context. */
 function tryMakeCustomProgram(gl: WebGL2RenderingContext, source: string): WebGLProgram | null {
   // ISF generators are GLSL ES 1.00 — strip any #version and alias gl_FragColor.
-  const body = source.replace(/#version[^\n]*\n/g, '').replace(/\bgl_FragColor\b/g, 'fragColor')
+  let body = source.replace(/#version[^\n]*\n/g, '').replace(/\bgl_FragColor\b/g, 'fragColor')
+  // ShaderToy shaders define mainImage() instead of main() — synthesise an
+  // entry point that maps the fragment coordinate into ShaderToy's signature.
+  if (/\bmainImage\s*\(/.test(body) && !/\bvoid\s+main\s*\(/.test(body)) {
+    body += '\nvoid main() { mainImage(fragColor, gl_FragCoord.xy); }\n'
+  }
   try {
     return makeProgram(gl, CUSTOM_PREAMBLE + body)
   } catch (e) {
@@ -172,7 +181,7 @@ export function VizProvider({ children }: { children: ReactNode }) {
 
   const [mode, setModeState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-mode'))
-    return v >= 0 && v <= 18 ? v : 1
+    return v >= 0 && v <= 22 ? v : 1
   })
   const [palette, setPaletteState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-palette'))

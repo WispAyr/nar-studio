@@ -38,6 +38,13 @@ becomes a selectable mode in the Viz panel, under "Custom". Edits reload live.
 Write a modern GLSL ES 3.00 fragment shader with a main() that sets fragColor.
 See example.glsl for the uniforms available to you.
 
+ShaderToy shaders: paste a single-pass ShaderToy shader straight in. The app
+provides iResolution, iTime, iTimeDelta, iFrame, iMouse, iDate, iSampleRate and
+iChannel0-3, and synthesises a main() around your mainImage(). iChannel0 is the
+spectrum, iChannel1 the waveform — so audio-reactive ShaderToys work. Multi-pass
+ShaderToys (Buffer A/B/C/D) and ones needing texture/cubemap/video inputs are
+not supported — use the "Image" tab shader only.
+
 ISF shaders: many single-pass ISF generators load too — the app aliases TIME,
 RENDERSIZE and isf_FragNormCoord and remaps gl_FragColor. Multi-pass ISF, and
 shaders needing image inputs or custom INPUTS, are not supported.
