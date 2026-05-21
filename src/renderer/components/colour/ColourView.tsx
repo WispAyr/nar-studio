@@ -14,7 +14,10 @@ import { Scopes } from '../../scopes'
  */
 export function ColourView({ onExit }: { onExit: () => void }) {
   const { sources, videoEls } = useCameraStreams()
-  const { grades, gradesRef, setGrade, resetGrade, copyGradeToAll, loadLut, clearLut, accelerated } = useGrade()
+  const {
+    grades, gradesRef, setGrade, resetGrade, copyGradeToAll, loadLut, clearLut, accelerated,
+    effectiveGrade, autoMatch, setAutoMatch, matchReference, setMatchReference,
+  } = useGrade()
 
   const [selected, setSelected] = useState(() => {
     const v = Number(localStorage.getItem('nar-selected-camera'))
@@ -44,7 +47,8 @@ export function ColourView({ onExit }: { onExit: () => void }) {
       const cv = previewRef.current
       if (!cv) return
       const v = videoEls.current[selectedRef.current]
-      const grade = bypassRef.current ? NEUTRAL_GRADE : gradesRef.current[selectedRef.current]
+      // The preview shows the on-air look — manual grade plus any auto-match.
+      const grade = bypassRef.current ? NEUTRAL_GRADE : effectiveGrade(selectedRef.current)
       if (v) engine.process(v, grade)
 
       const rect = cv.getBoundingClientRect()
@@ -67,7 +71,7 @@ export function ColourView({ onExit }: { onExit: () => void }) {
       cancelAnimationFrame(raf)
       engine.dispose()
     }
-  }, [videoEls, gradesRef])
+  }, [videoEls, gradesRef, effectiveGrade])
 
   const grade = grades[selected]
   const hasSignal = sources.find(s => s.index === selected)?.hasSignal ?? false
@@ -184,6 +188,43 @@ export function ColourView({ onExit }: { onExit: () => void }) {
             <span className="text-xs font-bold tracking-wider text-slate-300">CAM {selected + 1} GRADE</span>
           </div>
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
+
+            <section className="flex flex-col gap-1.5">
+              <SectionLabel>Camera match — keep all cameras consistent</SectionLabel>
+              <button
+                onClick={() => setAutoMatch(!autoMatch)}
+                className={`text-xs py-1.5 rounded font-bold uppercase tracking-wider transition-colors ${
+                  autoMatch ? 'bg-nar-green text-black' : 'bg-surface-700 text-slate-300 hover:bg-surface-600 hover:text-white'
+                }`}
+              >
+                Auto-match {autoMatch ? 'ON' : 'OFF'}
+              </button>
+              {autoMatch && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500 shrink-0">Match to</span>
+                  <div className="flex gap-1 flex-1">
+                    {[0, 1, 2, 3].map(i => (
+                      <button
+                        key={i}
+                        onClick={() => setMatchReference(i)}
+                        className={`flex-1 text-[11px] py-1 rounded transition-colors ${
+                          matchReference === i
+                            ? 'bg-nar-blue text-white'
+                            : 'bg-surface-700 text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <span className="text-[10px] text-slate-700 leading-snug">
+                {autoMatch
+                  ? `Every camera eases toward CAM ${matchReference + 1}'s exposure and colour balance — skin tone when a face is visible. Grade CAM ${matchReference + 1} to taste; the rest follow.`
+                  : 'Continuously balances exposure and white balance across all four cameras so a cut never jumps.'}
+              </span>
+            </section>
 
             <section className="flex flex-col gap-1.5">
               <SectionLabel>Looks — one-click presets</SectionLabel>
