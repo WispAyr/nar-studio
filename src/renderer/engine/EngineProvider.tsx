@@ -592,21 +592,23 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     let raf = 0
     let lastBeatAt = 0
 
-    // Next source to cut to — a signal-bearing camera (preferring cams with a
-    // detected person so the montage never lands on an empty chair), or the
-    // music visualizer when the director is set to use visuals. -1 = nothing.
+    // Next source to cut to — a signal-bearing camera that has a person in
+    // frame so the montage never lands on an empty chair, or the music
+    // visualizer. When no camera has anyone in it the visualizer carries the
+    // show rather than cutting to an empty room. -1 = hold the current shot.
     const pickAutoSource = (): number => {
       const live = builtinProgramRef.current.slots
       const vizOk = autoVjVizRef.current && !live.includes(VIZ_SLOT)
       const signal = camSourcesRef.current.filter(c => c.hasSignal).map(c => c.index)
       let pool = signal.filter(i => !live.includes(i))
       if (pool.length === 0) pool = signal.filter(i => i !== live[0])
-      // ~a third of beat-cuts go to the visualizer (or all of them if no camera).
-      if (vizOk && (pool.length === 0 || Math.random() < 0.3)) return VIZ_SLOT
-      if (pool.length === 0) return -1
+      // Only cameras with a detected person — never beat-cut to an empty chair.
       const withPeople = pool.filter(i => (analysisRef.current[i]?.people ?? 0) > 0)
-      const choose = withPeople.length > 0 ? withPeople : pool
-      return choose[Math.floor(Math.random() * choose.length)]
+      // ~a third of beat-cuts go to the visualizer; all of them when no camera
+      // has anyone in frame.
+      if (vizOk && (withPeople.length === 0 || Math.random() < 0.3)) return VIZ_SLOT
+      if (withPeople.length === 0) return -1
+      return withPeople[Math.floor(Math.random() * withPeople.length)]
     }
 
     // Director layout decision — mostly a solo shot, but occasionally a split

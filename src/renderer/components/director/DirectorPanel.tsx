@@ -1,13 +1,17 @@
 import { useDirector } from '../../ai/DirectorProvider'
 import { DIRECTOR_STYLES } from '../../ai/directorStyles'
+import { CAMERA_ROLES } from '../../ai/cameraRoles'
+import { useSceneAnalysis } from '../../ai/SceneAnalysisProvider'
 import { PeopleSection } from './PeopleSection'
 
 /**
- * AI Director control panel — on/off, directing style, and a live readout of
- * what the director sees (per-camera speaking scores) and what it is doing.
+ * AI Director control panel — on/off, directing style, per-camera roles, and a
+ * live readout of what the director sees (per-camera speaking scores) and what
+ * it is doing.
  */
 export function DirectorPanel() {
-  const { enabled, setEnabled, styleId, setStyleId, status } = useDirector()
+  const { enabled, setEnabled, styleId, setStyleId, status, roles, setRole } = useDirector()
+  const { analysis } = useSceneAnalysis()
 
   return (
     <div className="flex flex-col gap-2 p-3 h-full overflow-y-auto">
@@ -79,13 +83,52 @@ export function DirectorPanel() {
         ))}
       </div>
 
+      {/* Camera roles — tell the director what each camera is for. It weights
+          its choices toward the right camera and frames each shot to its role. */}
+      <span className="text-xs text-slate-600 uppercase tracking-wider mt-1">Camera roles</span>
+      <div className="flex flex-col gap-1">
+        {[0, 1, 2, 3].map(i => {
+          const people = analysis[i]?.people ?? 0
+          return (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-500 w-9 shrink-0">CAM {i + 1}</span>
+              <span
+                title={people > 0 ? `${people} in frame` : 'No one in frame'}
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${people > 0 ? 'bg-nar-green' : 'bg-surface-600'}`}
+              />
+              <div className="flex gap-0.5 flex-1">
+                {CAMERA_ROLES.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => setRole(i, r.id)}
+                    title={r.description}
+                    className={`flex-1 text-[9px] font-bold py-1 rounded transition-colors ${
+                      roles[i] === r.id
+                        ? 'bg-nar-blue text-white'
+                        : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {r.short}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+        <span className="text-[10px] text-slate-700 leading-snug">
+          Presenter is the home shot; Wide stays wide for variety. Hover a role
+          for what it does.
+        </span>
+      </div>
+
       <div className="border-t border-surface-700 pt-2 mt-1">
         <PeopleSection />
       </div>
 
       <span className="text-[10px] text-slate-700 mt-1">
-        The director follows whoever is speaking using audio-visual analysis.
-        A manual cut always overrides it; tracking keeps off-air shots framed.
+        The director follows whoever is speaking using audio-visual analysis,
+        weighted by camera role, and never cuts to an empty camera. A manual cut
+        always overrides it; off-air shots are framed to their role automatically.
       </span>
     </div>
   )

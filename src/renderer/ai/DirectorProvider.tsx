@@ -5,16 +5,44 @@ import { useViz } from '../viz/VizProvider'
 import { useSceneAnalysis } from './SceneAnalysisProvider'
 import { ActiveSpeakerDetector } from './activeSpeaker'
 import { DEFAULT_STYLE_ID, getStyle } from './directorStyles'
+import { type CameraRole, loadCameraRoles, saveCameraRoles, roleMeta } from './cameraRoles'
 
 // Decision loop period. Fast enough to land cuts tight, slow enough to be cheap.
 const TICK_MS = 140
 // A program change within this long after a director cut is treated as its own.
 const OWN_CUT_MS = 600
-// Shot composition — fraction of a camera's zoom range used per shot size, and
-// how fast the zoom eases toward it each tick.
-const CLOSE_FRAC = 0.5
-const MEDIUM_FRAC = 0.18
-const ZOOM_EASE = 0.15
+// A camera still counts as "populated" this long after its last detected face,
+// so a brief detection dropout never reads an occupied chair as empty.
+const POPULATED_GRACE_MS = 5000
+// Auto-framing — target face height for a composed close-up, and the zoom loop
+// gain / easing. The framer drives camera zoom so each shot is sized to its
+// role; a poorly-centred subject is framed looser so the zoom never crops them.
+const SHOT_CLOSEUP = 0.40
+const ZOOM_GAIN = 1.6
+const ZOOM_EASE = 0.16
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+/** Whether the operator has AI auto-track enabled for a camera (it owns pan/tilt). */
+function camTracked(index: number): boolean {
+  try {
+    const raw = localStorage.getItem('nar-tracking')
+    if (raw) { const a = JSON.parse(raw); return Array.isArray(a) && !!a[index] }
+  } catch { /* ignore */ }
+  return false
+}
+
+/** 0..1 framing quality of a detected face — well-centred and sensibly sized. */
+function framingScore(p: { cx: number; cy: number; size: number }): number {
+  const offX = Math.min(1, Math.abs(p.cx - 0.5) / 0.34)
+  const offY = Math.min(1, Math.abs(p.cy - 0.42) / 0.34)
+  const centred = Math.max(0, 1 - (offX * 0.7 + offY * 0.3))
+  const sz = p.size
+  const sized = sz < 0.10 ? sz / 0.10
+              : sz > 0.50 ? Math.max(0, (0.78 - sz) / 0.28)
+              : 1
+  return centred * sized
+}
 
 export interface DirectorStatus {
   /** Active speaker camera index, or -1 when none is confident. */
@@ -33,6 +61,9 @@ interface DirectorContextValue {
   styleId: string
   setStyleId: (id: string) => void
   status: DirectorStatus
+  /** Per-camera role — drives which camera the director picks and how it frames. */
+  roles: CameraRole[]
+  setRole: (index: number, role: CameraRole) => void
 }
 
 const Ctx = createContext<DirectorContextValue | null>(null)
@@ -42,7 +73,9 @@ const IDLE: DirectorStatus = { speaker: -1, confidence: 0, scores: [0, 0, 0, 0],
  * The AI Director. It works out who is speaking by correlating each camera's
  * mouth motion against the studio audio, then cuts the program with a sense of
  * shot grammar — turn-change cuts, reaction shots, variety, pause-awareness —
- * tuned by the selected directing style. A manual cut always overrides it.
+ * tuned by the selected directing style and weighted by each camera's role.
+ * It never cuts to a camera with no one in frame, frames every off-air shot to
+ * its role, and a manual cut always overrides it.
  */
 export function DirectorProvider({ children }: { children: ReactNode }) {
   const engine = useEngine()
@@ -61,11 +94,14 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabledState] = useState(() => localStorage.getItem('nar-director') === 'on')
   const [styleId, setStyleIdState] = useState(() => localStorage.getItem('nar-director-style') || DEFAULT_STYLE_ID)
   const [status, setStatus] = useState<DirectorStatus>(IDLE)
+  const [roles, setRolesState] = useState<CameraRole[]>(() => loadCameraRoles())
 
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
   const styleRef = useRef(getStyle(styleId))
   styleRef.current = getStyle(styleId)
+  const rolesRef = useRef(roles)
+  rolesRef.current = roles
 
   const setEnabled = useCallback((on: boolean) => {
     localStorage.setItem('nar-director', on ? 'on' : 'off')
@@ -82,6 +118,15 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
     setStyleIdState(id)
   }, [])
 
+  const setRole = useCallback((index: number, role: CameraRole) => {
+    setRolesState(prev => {
+      const next = prev.slice()
+      next[index] = role
+      saveCameraRoles(next)
+      return next
+    })
+  }, [])
+
   // Drive the cinematic letterbox from the active style (cleared when off).
   useEffect(() => {
     engineRef.current.setLetterbox(enabled ? getStyle(styleId).letterbox : 0)
@@ -90,6 +135,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const asd = new ActiveSpeakerDetector()
     const lastMouth = [0, 0, 0, 0]
+    const lastFaceAt = [0, 0, 0, 0]   // Date.now() a face was last seen per camera
 
     // ── director memory ──────────────────────────────────────────────────────
     let committed = -1          // speaker the director is committed to
@@ -102,17 +148,47 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
     let recent: number[] = []   // cameras cut to recently — for shot variety
     let reaction: { until: number; back: number } | null = null
     let wasActive = false
-    const zoomBusy = [false, false, false, false]   // shot-composition apply guards
 
-    /** A face camera other than `exclude`, preferring one not used recently. */
-    const camWithFace = (exclude: number): number => {
-      const faces: number[] = []
+    // ── auto-framer state ────────────────────────────────────────────────────
+    const frameBusy = [false, false, false, false]
+    const frameSeen = [0, 0, 0, 0]   // analysis.updatedAt the framer last acted on
+
+    /** A camera counts as populated for a grace window after its last face. */
+    const populated = (i: number, now: number): boolean =>
+      i >= 0 && i <= 3 && lastFaceAt[i] > 0 && now - lastFaceAt[i] < POPULATED_GRACE_MS
+
+    /**
+     * Pick a populated camera other than `exclude`, ranked by role weight and
+     * framing quality, biased against cameras used recently. -1 if none.
+     */
+    const pickCamera = (exclude: number, now: number): number => {
+      let best = -1
+      let bestScore = -1
       for (let i = 0; i < 4; i++) {
-        if (i !== exclude && analysisRef.current[i]?.primary) faces.push(i)
+        if (i === exclude || !populated(i, now)) continue
+        const rm = roleMeta(rolesRef.current[i])
+        const p = analysisRef.current[i]?.primary
+        const fr = p ? framingScore(p) : 0.35
+        let score = rm.weight + fr * 0.45 + Math.random() * 0.18
+        if (recent.includes(i)) score -= 0.55
+        if (score > bestScore) { bestScore = score; best = i }
       }
-      if (faces.length === 0) return -1
-      const fresh = faces.filter(i => !recent.includes(i))
-      return (fresh.length ? fresh : faces)[0]
+      return best
+    }
+
+    /** The best "home" camera — highest-weight populated role (the presenter). */
+    const pickHome = (now: number): number => {
+      let best = -1
+      let bestScore = -1
+      for (let i = 0; i < 4; i++) {
+        if (!populated(i, now)) continue
+        const rm = roleMeta(rolesRef.current[i])
+        const p = analysisRef.current[i]?.primary
+        const fr = p ? framingScore(p) : 0.35
+        const score = rm.weight * 2 + fr
+        if (score > bestScore) { bestScore = score; best = i }
+      }
+      return best
     }
 
     const doCut = (cam: number, now: number) => {
@@ -129,7 +205,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
       const eng = engineRef.current
       const style = styleRef.current
 
-      // ── feed the speaker detector every tick ───────────────────────────────
+      // ── feed the speaker detector + track who is populated ─────────────────
       asd.pushAudio(now, vizRef.current.levelsRef.current.level)
       for (let i = 0; i < 4; i++) {
         const a = analysisRef.current[i]
@@ -137,6 +213,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
           lastMouth[i] = a.updatedAt
           asd.pushMouth(i, a.updatedAt, a.primary?.mouthOpen ?? 0, !!a.primary)
         }
+        if (a?.primary) lastFaceAt[i] = now
       }
       const { speaker, confidence, scores } = asd.evaluate(now)
 
@@ -170,9 +247,13 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
       const curCam = eng.programSlots[0]
 
       // ── speaker hysteresis — commit only to a sustained, confident lead ────
+      // The confidence bar is eased for high-weight roles (it is cheap to trust
+      // a presenter) and raised for low-weight ones (rarely call a wide "live").
       if (speaker >= 0 && speaker !== committed) {
         if (speaker !== candidate) { candidate = speaker; candidateSince = now }
-        if (confidence >= style.speakerSwitchConfidence && now - candidateSince >= style.speakerSwitchHold) {
+        const rm = roleMeta(rolesRef.current[speaker])
+        const confNeeded = style.speakerSwitchConfidence * (1.25 - 0.35 * rm.weight)
+        if (confidence >= confNeeded && now - candidateSince >= style.speakerSwitchHold) {
           committed = speaker
           speakerSince = now
           candidate = -1
@@ -181,29 +262,44 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
         candidate = -1
       }
 
-      // ── shot composition — compose shot sizes via zoom on off-air cameras ──
-      // The speaker's camera is framed as a close-up, the rest as mediums, all
-      // while off air so the shot is ready the moment the director cuts to it.
-      if (style.shotComposition) {
-        for (let i = 0; i < 4; i++) {
-          if (eng.programSlots.includes(i) || zoomBusy[i]) continue
-          const track = streamsRef.current[i]?.getVideoTracks()[0]
-          if (!track) continue
-          const caps = (track.getCapabilities?.() ?? {}) as any
-          if (!caps.zoom) continue
-          const frac = i === committed ? CLOSE_FRAC : MEDIUM_FRAC
-          const target = caps.zoom.min + frac * (caps.zoom.max - caps.zoom.min)
-          const s = (track.getSettings?.() ?? {}) as any
-          const cur = typeof s.zoom === 'number' ? s.zoom : caps.zoom.min
-          const step = caps.zoom.step || 1
-          const next = Math.round((cur + (target - cur) * ZOOM_EASE) / step) * step
-          if (Math.abs(next - cur) < step) continue
-          zoomBusy[i] = true
-          const adv: any = { zoom: next }
-          track.applyConstraints({ advanced: [adv] as MediaTrackConstraintSet[] })
-            .catch(() => {})
-            .finally(() => { zoomBusy[i] = false })
-        }
+      // ── auto-frame off-air cameras — size each shot to its camera role ─────
+      // Runs on cameras that are off air: the shot is composed and ready before
+      // the director cuts to it. Zoom is driven from the *measured* face size,
+      // so the framing is correct regardless of how far the subject sits.
+      for (let i = 0; i < 4; i++) {
+        if (eng.programSlots.includes(i) || frameBusy[i]) continue
+        const a = analysisRef.current[i]
+        if (!a?.primary || a.updatedAt === frameSeen[i]) continue   // act once per reading
+        frameSeen[i] = a.updatedAt
+        const track = streamsRef.current[i]?.getVideoTracks()[0]
+        if (!track) continue
+        const caps = (track.getCapabilities?.() ?? {}) as any
+        if (!caps.zoom) continue
+        const s = (track.getSettings?.() ?? {}) as any
+        const role = rolesRef.current[i]
+        const rm = roleMeta(role)
+        // Resting size for the role; the speaker tightens to a close-up when the
+        // style composes shots — but never on a 'wide' establishing camera.
+        let targetSize = rm.shotSize
+        if (style.shotComposition && i === committed && role !== 'wide') targetSize = SHOT_CLOSEUP
+        // A poorly-centred subject is framed looser so the zoom never crops them
+        // (the operator's AI Auto-Track recentres the camera if it is enabled).
+        const off = Math.max(Math.abs(a.primary.cx - 0.5), Math.abs(a.primary.cy - 0.42))
+        if (off > 0.20 && !camTracked(i)) targetSize = Math.min(targetSize, 0.22)
+        const zr = caps.zoom.max - caps.zoom.min
+        if (zr <= 0) continue
+        const curZoom = typeof s.zoom === 'number' ? s.zoom : caps.zoom.min
+        const err = clamp(targetSize - a.primary.size, -0.18, 0.18)
+        if (Math.abs(err) < 0.03) continue                          // close enough — leave it
+        const want = clamp(curZoom + err * ZOOM_GAIN * zr, caps.zoom.min, caps.zoom.max)
+        const step = caps.zoom.step || 1
+        const next = Math.round((curZoom + (want - curZoom) * ZOOM_EASE) / step) * step
+        if (Math.abs(next - curZoom) < step) continue
+        frameBusy[i] = true
+        const adv: any = { zoom: next }
+        track.applyConstraints({ advanced: [adv] as MediaTrackConstraintSet[] })
+          .catch(() => {})
+          .finally(() => { frameBusy[i] = false })
       }
 
       const publish = (action: string) =>
@@ -214,7 +310,10 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
         if (now < reaction.until) { publish('Reaction shot'); return }
         const back = reaction.back
         reaction = null
-        doCut(back, now)
+        // Only return to the speaker shot if it still has someone in it.
+        let dest = back
+        if (!populated(back, now)) { const h = pickHome(now); if (h >= 0) dest = h }
+        doCut(dest, now)
         publish('Back to speaker')
         return
       }
@@ -222,8 +321,22 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
       const elapsed = now - lastCutAt
       if (elapsed < style.minHold) { publish('Holding'); return }
 
+      // ── recover from an empty shot — never sit on an empty chair ───────────
+      if (curCam >= 0 && !populated(curCam, now)) {
+        const home = committed >= 0 && populated(committed, now) ? committed : pickHome(now)
+        if (home >= 0 && home !== curCam) {
+          doCut(home, now)
+          publish(`Empty shot — to CAM ${home + 1}`)
+          return
+        }
+        publish('Holding — no one in frame')
+        return
+      }
+
       // ── cut to the speaker on a turn change ────────────────────────────────
-      if (committed >= 0 && committed !== curCam) {
+      // Guarded by populated() so a lost face never pulls the program to a
+      // camera the subject has already left.
+      if (committed >= 0 && committed !== curCam && populated(committed, now)) {
         doCut(committed, now)
         publish(`Cut to speaker — CAM ${committed + 1}`)
         return
@@ -232,7 +345,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
       // ── already on the speaker: reaction shot during a long monologue ──────
       const monologue = committed >= 0 ? now - speakerSince : 0
       if (style.reactionShots && committed >= 0 && committed === curCam && monologue > style.reactionAfter) {
-        const react = camWithFace(committed)
+        const react = pickCamera(committed, now)
         if (react >= 0) {
           reaction = { until: now + style.reactionHold, back: curCam }
           doCut(react, now)
@@ -246,7 +359,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
         const loud = vizRef.current.levelsRef.current.level > 0.22
         const overdue = elapsed > style.maxHold * (1 + style.pauseBias * 0.6)
         if (!loud || overdue) {
-          const alt = camWithFace(curCam)
+          const alt = pickCamera(curCam, now)
           if (alt >= 0) {
             doCut(alt, now)
             publish(`New angle — CAM ${alt + 1}`)
@@ -264,7 +377,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <Ctx.Provider value={{ enabled, setEnabled, styleId, setStyleId, status }}>
+    <Ctx.Provider value={{ enabled, setEnabled, styleId, setStyleId, status, roles, setRole }}>
       {children}
     </Ctx.Provider>
   )
