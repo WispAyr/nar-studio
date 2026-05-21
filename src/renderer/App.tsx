@@ -24,10 +24,11 @@ import { DirectorProvider } from './ai/DirectorProvider'
 import { DirectorPanel } from './components/director/DirectorPanel'
 import { StreamDeckProvider } from './streamdeck/StreamDeckProvider'
 import { StreamDeckView } from './components/streamdeck/StreamDeckView'
+import { StudioView } from './components/studio/StudioView'
 import { EngineProvider } from './engine/EngineProvider'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director'
-type View = 'switcher' | 'colour' | 'streamdeck'
+type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
 
 export default function App() {
   return (
@@ -65,17 +66,20 @@ function Workspace() {
   const [view, setView] = useState<View>('switcher')
   if (view === 'colour') return <ColourView onExit={() => setView('switcher')} />
   if (view === 'streamdeck') return <StreamDeckView onExit={() => setView('switcher')} />
+  if (view === 'studio') return <StudioView onExit={() => setView('switcher')} />
   return (
     <AppInner
       onOpenColour={() => setView('colour')}
       onOpenStreamDeck={() => setView('streamdeck')}
+      onOpenStudio={() => setView('studio')}
     />
   )
 }
 
-function AppInner({ onOpenColour, onOpenStreamDeck }: {
+function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
   onOpenColour: () => void
   onOpenStreamDeck: () => void
+  onOpenStudio: () => void
 }) {
   const [selectedCamera, setSelectedCamera] = useState(() => {
     const v = Number(localStorage.getItem('nar-selected-camera'))
@@ -113,18 +117,24 @@ function AppInner({ onOpenColour, onOpenStreamDeck }: {
         <div className="w-72 flex flex-col gap-1 shrink-0">
 
           {/* Workspace shortcuts */}
-          <div className="grid grid-cols-2 gap-1 shrink-0">
+          <div className="grid grid-cols-3 gap-1 shrink-0">
             <button
               onClick={onOpenColour}
-              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-xs font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
+              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
             >
               Colour
             </button>
             <button
               onClick={onOpenStreamDeck}
-              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-xs font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
+              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
             >
               Stream Deck
+            </button>
+            <button
+              onClick={onOpenStudio}
+              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
+            >
+              Studio Map
             </button>
           </div>
 
