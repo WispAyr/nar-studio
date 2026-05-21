@@ -1,22 +1,50 @@
-import { useOBS } from '../../hooks/useOBS'
-import { useCameras } from '../../hooks/useCameras'
+import { useEngine } from '../../engine/EngineProvider'
+import { useCameraStreams } from '../../camera/CameraStreamProvider'
+import type { EngineId } from '../../engine/types'
+
+const ENGINES: { id: EngineId; label: string }[] = [
+  { id: 'builtin', label: 'Built-in' },
+  { id: 'obs', label: 'OBS' },
+]
 
 export function StatusBar() {
-  const { connected, streaming, recording } = useOBS()
-  const { cameras } = useCameras()
-  const connectedCams = cameras.filter(c => c.connected).length
+  const { engineId, setEngineId, connected, recording, streamStatus } = useEngine()
+  const { sources } = useCameraStreams()
+  const liveCams = sources.filter(s => s.hasSignal).length
 
   return (
     <div className="flex items-center gap-4 px-4 h-6 bg-surface-950 border-t border-surface-800 shrink-0 text-xs">
-      {/* OBS */}
+      {/* Engine selector */}
+      <div className="flex items-center gap-1">
+        <span className="text-slate-600 uppercase tracking-wider">Engine</span>
+        {ENGINES.map(e => (
+          <button
+            key={e.id}
+            onClick={() => setEngineId(e.id)}
+            className={`px-1.5 rounded transition-colors ${
+              engineId === e.id
+                ? 'bg-nar-blue text-white'
+                : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            {e.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Engine status */}
       <div className="flex items-center gap-1.5">
-        <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-nar-green' : 'bg-surface-600'}`} />
-        <span className="text-slate-500">OBS {connected ? 'Connected' : 'Disconnected'}</span>
+        <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-nar-green' : 'bg-nar-amber'}`} />
+        <span className="text-slate-500">
+          {engineId === 'builtin'
+            ? 'Built-in engine'
+            : connected ? 'OBS Connected' : 'OBS Disconnected'}
+        </span>
       </div>
 
       {/* Cameras */}
       <div className="flex items-center gap-1.5">
-        <span className="text-slate-500">{connectedCams}/4 cameras</span>
+        <span className="text-slate-500">{liveCams}/4 cameras</span>
       </div>
 
       {/* States */}
@@ -26,10 +54,18 @@ export function StatusBar() {
           <span className="text-nar-red font-bold">REC</span>
         </div>
       )}
-      {streaming && (
+      {streamStatus !== 'idle' && (
         <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-nar-red animate-pulse" />
-          <span className="text-nar-red font-bold">LIVE</span>
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+            streamStatus === 'reconnecting' ? 'bg-nar-amber' : 'bg-nar-red'
+          }`} />
+          <span className={`font-bold ${
+            streamStatus === 'reconnecting' ? 'text-nar-amber' : 'text-nar-red'
+          }`}>
+            {streamStatus === 'live' ? 'LIVE'
+              : streamStatus === 'reconnecting' ? 'RECONNECTING'
+              : 'STREAM LOST'}
+          </span>
         </div>
       )}
 

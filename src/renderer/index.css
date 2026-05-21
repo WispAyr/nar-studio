@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Poppins — Now Ayrshire Radio brand font, used for on-screen CG titles. */
+@font-face {
+  font-family: 'Poppins';
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/Poppins-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-weight: 600;
+  font-display: swap;
+  src: url('./fonts/Poppins-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Poppins';
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/Poppins-Bold.woff2') format('woff2');
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -33,10 +53,6 @@ html, body, #root {
 .recording-border {
   animation: rec-pulse 1.5s ease-in-out infinite;
 }
-
-/* Camera preview hover */
-.cam-preview:hover .cam-overlay { opacity: 1; }
-.cam-overlay { opacity: 0; transition: opacity 0.15s; }
 
 /* PTZ joystick */
 .ptz-btn {

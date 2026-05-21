@@ -1,10 +1,21 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, session, protocol, net } from 'electron'
 import path from 'path'
+import { pathToFileURL } from 'url'
 import { registerIpcHandlers } from './ipc'
 import { obsManager } from './obs'
 import { hidManager } from './hid'
 import { schedulePoller } from './schedule'
 import { recordingManager } from './recording'
+import { builtinRecorder } from './builtinRecorder'
+import { builtinStreamer } from './builtinStreamer'
+import { cgAssets } from './cgAssets'
+import { vizShaders } from './vizShaders'
+
+// The cg:// scheme serves CG assets to the renderer; privileged so assets
+// drawn onto the program canvas don't taint it (recording needs captureStream).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'cg', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+])
 
 let mainWindow: BrowserWindow | null = null
 
@@ -32,6 +43,9 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
+    mainWindow.webContents.on('console-message', (_e, _level, message) => {
+      console.log('[renderer]', message)
+    })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'))
   }
@@ -40,7 +54,34 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Local studio app — grant camera / microphone / display-capture requests.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(true))
+  session.defaultSession.setPermissionCheckHandler(() => true)
+
+  // WebHID — let the renderer talk to a Stream Deck directly. Grant the
+  // device the renderer asks for (the library already filters to Stream Decks).
+  session.defaultSession.setDevicePermissionHandler(() => true)
+  session.defaultSession.on('select-hid-device', (_event, details, callback) => {
+    callback(details.deviceList[0]?.deviceId)
+  })
+
+  cgAssets.init()
+  protocol.handle('cg', request => {
+    const url = new URL(request.url)
+    const file = cgAssets.resolve(url.hostname, decodeURIComponent(url.pathname.replace(/^\//, '')))
+    return file
+      ? net.fetch(pathToFileURL(file).toString())
+      : new Response('Not found', { status: 404 })
+  })
+
+  vizShaders.init()
   createWindow()
+  cgAssets.watch(() => mainWindow?.webContents.send('cg:changed'))
+  vizShaders.watch(() => mainWindow?.webContents.send('viz-shaders:changed'))
+  // FFmpeg lost the RTMP link — tell the renderer so it can reconnect.
+  builtinStreamer.on('ended', () => mainWindow?.webContents.send('stream:ended'))
+  // A recording file failed to write (disk full, permissions) — warn the operator.
+  builtinRecorder.on('error', (msg: string) => mainWindow?.webContents.send('rec:error', msg))
   registerIpcHandlers(ipcMain)
 
   // Start background services
@@ -56,6 +97,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', async () => {
   await recordingManager.stopAll()
+  builtinRecorder.stopAll()
   hidManager.stop()
   schedulePoller.stop()
   if (process.platform !== 'darwin') app.quit()

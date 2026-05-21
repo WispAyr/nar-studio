@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useOBS } from '../../hooks/useOBS'
+import { useEngine } from '../../engine/EngineProvider'
 
 const studio = (window as any).studio
 
@@ -13,11 +13,21 @@ interface StreamProfile {
 
 const PLATFORM_LABELS = { youtube: 'YT', twitch: 'TW', custom: '⚡' }
 
+const pad = (n: number) => String(n).padStart(2, '0')
+const PREROLL_PRESETS = [30, 60, 90, 120]
+const durLabel = (s: number) => (s % 60 === 0 ? `${s / 60}m` : `${s}s`)
+
 export function StreamPanel() {
-  const { streaming, streamTimecode } = useOBS()
+  const {
+    engineId, streamStatus, streamTimecode, streamStartedAt, startStream, stopStream,
+    prerollEnabled, setPrerollEnabled, prerollSeconds, setPrerollSeconds, prerollEndsAt, skipPreroll,
+  } = useEngine()
   const [profiles, setProfiles] = useState<StreamProfile[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<StreamProfile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState('')
+  const [prerollLeft, setPrerollLeft] = useState('')
 
   useEffect(() => {
     const load = async () => {
@@ -31,8 +41,52 @@ export function StreamPanel() {
     load()
   }, [])
 
-  const startStream = () => studio?.startStream?.(activeId ?? undefined)
-  const stopStream = () => studio?.stopStream?.()
+  // Built-in stream elapsed timer
+  useEffect(() => {
+    if (!streamStartedAt) { setElapsed(''); return }
+    const tick = () => {
+      const ms = Date.now() - streamStartedAt
+      const h = Math.floor(ms / 3_600_000)
+      const m = Math.floor((ms % 3_600_000) / 60_000)
+      const s = Math.floor((ms % 60_000) / 1000)
+      setElapsed(`${pad(h)}:${pad(m)}:${pad(s)}`)
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return () => clearInterval(t)
+  }, [streamStartedAt])
+
+  // Pre-roll countdown
+  useEffect(() => {
+    if (!prerollEndsAt) { setPrerollLeft(''); return }
+    const tick = () => {
+      const ms = Math.max(0, prerollEndsAt - Date.now())
+      setPrerollLeft(`${Math.floor(ms / 60000)}:${pad(Math.floor((ms % 60000) / 1000))}`)
+    }
+    tick()
+    const t = setInterval(tick, 250)
+    return () => clearInterval(t)
+  }, [prerollEndsAt])
+
+  const goLive = async () => {
+    setError(null)
+    const profile = profiles.find(p => p.id === activeId)
+    if (engineId === 'builtin') {
+      if (!profile) { setError('Select a stream profile'); return }
+      try {
+        await startStream(profile.rtmpUrl, profile.streamKey)
+      } catch (e) {
+        setError((e as Error).message)
+      }
+    } else {
+      studio?.startStream?.(activeId ?? undefined)
+    }
+  }
+
+  const endStream = () => {
+    if (engineId === 'builtin') stopStream()
+    else studio?.stopStream?.()
+  }
 
   const saveProfile = async (p: StreamProfile) => {
     await studio?.saveStreamProfile?.(p)
@@ -48,36 +102,111 @@ export function StreamPanel() {
     platform: 'youtube',
   })
 
+  const timecode = engineId === 'builtin' ? elapsed : (streamTimecode ?? '')
+
   return (
     <div className="flex flex-col gap-2 p-3 h-full overflow-y-auto">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-500 uppercase tracking-wider">Stream</span>
+        <span className="text-xs text-slate-500 uppercase tracking-wider">
+          Stream — {engineId === 'builtin' ? 'Built-in' : 'OBS'}
+        </span>
         <button onClick={newProfile} className="text-xs text-slate-500 hover:text-slate-300">+ Add</button>
       </div>
 
-      {/* Go Live button */}
-      {streaming ? (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-nar-red animate-pulse" />
-            <span className="text-xs font-bold text-nar-red">LIVE</span>
-            <span className="text-xs font-mono text-slate-400 tabular-nums">{streamTimecode ?? ''}</span>
-          </div>
-          <button
-            onClick={stopStream}
-            className="text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
-          >
-            End Stream
-          </button>
-        </div>
-      ) : (
+      {/* Go Live / live status */}
+      {streamStatus === 'idle' ? (
         <button
-          onClick={startStream}
+          onClick={goLive}
           disabled={!activeId}
           className="text-xs bg-nar-red hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
         >
           ▶ Go Live
         </button>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full animate-pulse ${
+              streamStatus === 'live' ? 'bg-nar-red' : 'bg-nar-amber'
+            }`} />
+            <span className={`text-xs font-bold ${
+              streamStatus === 'reconnecting' ? 'text-nar-amber' : 'text-nar-red'
+            }`}>
+              {streamStatus === 'live' ? 'LIVE'
+                : streamStatus === 'reconnecting' ? 'RECONNECTING…'
+                : 'STREAM LOST'}
+            </span>
+            {streamStatus === 'live' && (
+              <span className="text-xs font-mono text-slate-400 tabular-nums">{timecode}</span>
+            )}
+          </div>
+          {streamStatus === 'reconnecting' && (
+            <span className="text-xs text-slate-500">RTMP dropped — restoring the stream…</span>
+          )}
+          {streamStatus === 'lost' && (
+            <span className="text-xs text-nar-red">Can’t reach the stream — still retrying. Check the connection.</span>
+          )}
+          {prerollEndsAt != null && (
+            <div className="flex items-center gap-2 rounded bg-nar-blue/15 border border-nar-blue/40 px-2 py-1.5">
+              <span className="text-xs font-bold text-nar-blue shrink-0">▶ PRE-ROLL</span>
+              <span className="text-xs font-mono text-slate-300 tabular-nums">{prerollLeft}</span>
+              <button
+                onClick={skipPreroll}
+                className="ml-auto text-xs px-2 py-0.5 rounded bg-surface-700 hover:bg-nar-blue hover:text-white text-slate-300 font-bold uppercase tracking-wider transition-colors"
+              >
+                Skip to live
+              </button>
+            </div>
+          )}
+          <button
+            onClick={endStream}
+            className="text-xs bg-surface-700 hover:bg-nar-red hover:text-white text-slate-400 py-1.5 rounded font-bold uppercase tracking-wider transition-colors"
+          >
+            End Stream
+          </button>
+        </div>
+      )}
+      {error && <span className="text-xs text-nar-red">{error}</span>}
+
+      {/* Pre-roll — optional visualiser intro before the stream shows cameras */}
+      {streamStatus === 'idle' && engineId === 'builtin' && (
+        <div className="flex flex-col gap-1.5 rounded bg-surface-800 border border-surface-700 p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400">Pre-roll visualiser</span>
+            <button
+              onClick={() => setPrerollEnabled(!prerollEnabled)}
+              className={`text-xs px-2 py-0.5 rounded font-bold transition-colors ${
+                prerollEnabled
+                  ? 'bg-nar-blue/20 text-nar-blue border border-nar-blue/40'
+                  : 'bg-surface-700 text-slate-500'
+              }`}
+            >
+              {prerollEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          {prerollEnabled && (
+            <>
+              <div className="flex gap-1">
+                {PREROLL_PRESETS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setPrerollSeconds(s)}
+                    className={`flex-1 text-xs py-1 rounded transition-colors ${
+                      prerollSeconds === s
+                        ? 'bg-nar-blue text-white'
+                        : 'bg-surface-700 text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {durLabel(s)}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-slate-600 leading-snug">
+                When you go live the music visualiser plays for {durLabel(prerollSeconds)}, then the
+                program cuts to the cameras. Cut manually or hit Skip to end it early.
+              </span>
+            </>
+          )}
+        </div>
       )}
 
       {/* Profile list */}
