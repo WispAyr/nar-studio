@@ -4,23 +4,28 @@ import {
 } from 'react'
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
-import { localMediapipe, CDN_WASM, CDN_FACE_MODEL } from '../mediapipe'
+import { localMediapipe, CDN_WASM, CDN_FACE_MODEL, CDN_POSE_MODEL } from '../mediapipe'
 import { resultToFaces, type FaceBox } from './faceLandmarks'
+import { type PoseBox } from './poseLandmarks'
 
 export type { FaceBox } from './faceLandmarks'
+export type { PoseBox } from './poseLandmarks'
 
 // One camera analysed per tick, round-robin across the four feeds.
 const DETECT_INTERVAL_MS = 80
 
 export interface CameraAnalysis {
   faces: FaceBox[]
+  /** Detected bodies — finds people even when their face is turned away. */
+  poses: PoseBox[]
   people: number
   /** The biggest face — the likely subject. Centre + size + mouth, normalised. */
   primary: { cx: number; cy: number; size: number; mouthOpen: number } | null
   updatedAt: number
 }
 
-const emptyAnalysis = (): CameraAnalysis => ({ faces: [], people: 0, primary: null, updatedAt: 0 })
+const emptyAnalysis = (): CameraAnalysis =>
+  ({ faces: [], poses: [], people: 0, primary: null, updatedAt: 0 })
 
 interface SceneContextValue {
   /**
@@ -58,7 +63,7 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
     let usingFallback = false
     const cleanups: Array<() => void> = []
 
-    const updateCamera = (idx: number, faces: FaceBox[]) => {
+    const updateCamera = (idx: number, faces: FaceBox[], poses: PoseBox[]) => {
       let primary: CameraAnalysis['primary'] = null
       if (faces.length) {
         const big = faces.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a))
@@ -70,7 +75,13 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
         }
       }
       // Mutate the ref in place — no setState, so no provider-tree re-render.
-      analysisRef.current[idx] = { faces, people: faces.length, primary, updatedAt: Date.now() }
+      // `people` counts faces or bodies, so a person turned away still registers.
+      analysisRef.current[idx] = {
+        faces, poses,
+        people: Math.max(faces.length, poses.length),
+        primary,
+        updatedAt: Date.now(),
+      }
     }
 
     // The next camera (scanning from `cam`) with a live frame, or -1. Dead
@@ -113,7 +124,9 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
         if (idx >= 0) {
           const v = videoEls.current[idx]!
           try {
-            updateCamera(idx, resultToFaces(landmarker.detect(v)))
+            // The main-thread fallback runs face-only (pose is worker-only, to
+            // keep the fallback light) — passes empty poses.
+            updateCamera(idx, resultToFaces(landmarker.detect(v)), [])
             markRunning('main thread', idx, analysisRef.current[idx].faces.length)
           } catch (e) {
             if (!logged) { logged = true; console.warn('[scene] detect failed:', (e as Error).message) }
@@ -188,14 +201,14 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
         if (msg.type === 'ready') {
           workerReady = true
           if (initTimeout) clearTimeout(initTimeout)
-          console.log(`[scene] face detection worker ready (${msg.delegate})`)
+          console.log(`[scene] detection worker ready (${msg.delegate}${msg.pose ? ' + pose' : ', face only'})`)
           setReady(true)
           tick()
         } else if (msg.type === 'error') {
           fallback(msg.message || 'worker reported an error')
         } else if (msg.type === 'result') {
           if (cancelled || usingFallback) return
-          updateCamera(msg.cam, msg.faces)
+          updateCamera(msg.cam, msg.faces, msg.poses ?? [])
           markRunning('worker', msg.cam, msg.faces.length)
           schedule()   // the next detection is paced from the result
         }
@@ -205,9 +218,11 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
       worker.postMessage({
         type: 'init',
         localWasm: localMediapipe('wasm'),
-        localModel: localMediapipe('face_landmarker.task'),
+        localFace: localMediapipe('face_landmarker.task'),
+        localPose: localMediapipe('pose_landmarker.task'),
         cdnWasm: CDN_WASM,
-        cdnModel: CDN_FACE_MODEL,
+        cdnFace: CDN_FACE_MODEL,
+        cdnPose: CDN_POSE_MODEL,
       })
       // If the worker never reports ready, fall back rather than hang.
       initTimeout = setTimeout(() => { if (!workerReady) fallback('init timed out') }, 12000)

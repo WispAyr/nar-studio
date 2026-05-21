@@ -133,7 +133,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const asd = new ActiveSpeakerDetector()
     const lastMouth = [0, 0, 0, 0]
-    const lastFaceAt = [0, 0, 0, 0]   // Date.now() a face was last seen per camera
+    const lastPersonAt = [0, 0, 0, 0]   // Date.now() a person (face or body) was last seen
 
     // ── director memory ──────────────────────────────────────────────────────
     let committed = -1          // speaker the director is committed to
@@ -151,9 +151,9 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
     const frameBusy = [false, false, false, false]
     const frameSeen = [0, 0, 0, 0]   // analysis.updatedAt the framer last acted on
 
-    /** A camera counts as populated for a grace window after its last face. */
+    /** A camera counts as populated for a grace window after its last person. */
     const populated = (i: number, now: number): boolean =>
-      i >= 0 && i <= 3 && lastFaceAt[i] > 0 && now - lastFaceAt[i] < POPULATED_GRACE_MS
+      i >= 0 && i <= 3 && lastPersonAt[i] > 0 && now - lastPersonAt[i] < POPULATED_GRACE_MS
 
     /**
      * Pick a populated camera other than `exclude`, ranked by role weight and
@@ -211,7 +211,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
           lastMouth[i] = a.updatedAt
           asd.pushMouth(i, a.updatedAt, a.primary?.mouthOpen ?? 0, !!a.primary)
         }
-        if (a?.primary) lastFaceAt[i] = now
+        if (a && (a.faces.length > 0 || a.poses.length > 0)) lastPersonAt[i] = now
       }
       const { speaker, confidence, scores } = asd.evaluate(now)
 
