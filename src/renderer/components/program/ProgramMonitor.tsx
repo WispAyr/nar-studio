@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useEngine } from '../../engine/EngineProvider'
 
 /**
@@ -7,8 +7,11 @@ import { useEngine } from '../../engine/EngineProvider'
  * a video feed over the websocket).
  */
 export function ProgramMonitor() {
-  const { engineId, getProgramCanvas, programSource, sources, recording, streamStatus, autoVj } = useEngine()
+  const {
+    engineId, getProgramCanvas, programSource, sources, recording, streamStatus, autoVj, prerollEndsAt,
+  } = useEngine()
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [prerollLeft, setPrerollLeft] = useState('')
 
   useEffect(() => {
     if (engineId !== 'builtin') return
@@ -38,6 +41,19 @@ export function ProgramMonitor() {
     return () => cancelAnimationFrame(raf)
   }, [engineId, getProgramCanvas])
 
+  // Pre-roll countdown — operator readout while the visualiser intro runs.
+  useEffect(() => {
+    if (prerollEndsAt == null) { setPrerollLeft(''); return }
+    const tick = () => {
+      const ms = Math.max(0, prerollEndsAt - Date.now())
+      const s = Math.floor((ms % 60000) / 1000)
+      setPrerollLeft(`${Math.floor(ms / 60000)}:${String(s).padStart(2, '0')}`)
+    }
+    tick()
+    const t = setInterval(tick, 250)
+    return () => clearInterval(t)
+  }, [prerollEndsAt])
+
   const activeLabel = sources.find(s => s.key === programSource)?.label || programSource || '—'
 
   return (
@@ -57,6 +73,11 @@ export function ProgramMonitor() {
       </div>
 
       <div className="absolute top-2 right-2 flex items-center gap-1.5 pointer-events-none">
+        {prerollEndsAt != null && (
+          <span className="text-xs font-bold bg-nar-blue text-white px-2 py-0.5 rounded animate-pulse">
+            ▶ PRE-ROLL {prerollLeft}
+          </span>
+        )}
         {autoVj && (
           <span className="text-xs font-bold bg-nar-green text-black px-2 py-0.5 rounded animate-pulse">
             ⏵ AUTO-VJ

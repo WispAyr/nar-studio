@@ -303,6 +303,9 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
       const publish = (action: string) =>
         setStatus({ speaker: committed, confidence, scores, action })
 
+      // ── hold while a stream pre-roll owns the program ──────────────────────
+      if (eng.prerollEndsAt != null) { publish('Stream pre-roll'); return }
+
       // ── reaction-shot hold ─────────────────────────────────────────────────
       if (reaction) {
         if (now < reaction.until) { publish('Reaction shot'); return }

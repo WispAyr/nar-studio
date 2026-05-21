@@ -68,6 +68,16 @@ interface EngineContextValue {
   streamStartedAt: number | null
   startStream: (rtmpUrl: string, streamKey: string) => Promise<void>
   stopStream: () => void
+  /** Play a visualizer pre-roll when a stream starts, before cutting to cameras. */
+  prerollEnabled: boolean
+  setPrerollEnabled: (on: boolean) => void
+  /** Pre-roll length in seconds. */
+  prerollSeconds: number
+  setPrerollSeconds: (s: number) => void
+  /** Epoch ms the active pre-roll ends, or null when no pre-roll is running. */
+  prerollEndsAt: number | null
+  /** End the pre-roll now and cut straight to the live program. */
+  skipPreroll: () => void
   cut: (sourceKey: string, transition?: TransitionType) => void
   transition: TransitionType
   setTransition: (t: TransitionType) => void
@@ -240,6 +250,32 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   bumperRef.current = bumper
   const bumperVideoRef = useRef<HTMLVideoElement | null>(null)
 
+  // ── Stream pre-roll — an optional visualizer intro shown when the stream
+  // goes live, before the program cuts to the cameras.
+  const [prerollEnabled, setPrerollEnabledState] = useState(() => localStorage.getItem('nar-preroll') === 'on')
+  const prerollEnabledRef = useRef(prerollEnabled)
+  prerollEnabledRef.current = prerollEnabled
+  const setPrerollEnabled = useCallback((on: boolean) => {
+    localStorage.setItem('nar-preroll', on ? 'on' : 'off')
+    setPrerollEnabledState(on)
+  }, [])
+  const [prerollSeconds, setPrerollSecondsState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-preroll-secs'))
+    return v >= 10 && v <= 300 ? v : 60
+  })
+  const prerollSecondsRef = useRef(prerollSeconds)
+  prerollSecondsRef.current = prerollSeconds
+  const setPrerollSeconds = useCallback((s: number) => {
+    const v = Math.min(300, Math.max(10, Math.round(s)))
+    localStorage.setItem('nar-preroll-secs', String(v))
+    setPrerollSecondsState(v)
+  }, [])
+  const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null)
+  const prerollEndsAtRef = useRef(prerollEndsAt)
+  prerollEndsAtRef.current = prerollEndsAt
+  const prerollReturnRef = useRef<BuiltinProgram | null>(null)
+  const prerollTimerRef = useRef<number | null>(null)
+
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null)
   if (!masterCanvasRef.current) masterCanvasRef.current = makeCanvas()
   const prevCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -274,6 +310,39 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     }
     activeTransitionRef.current = { effect, startedAt: performance.now(), durationMs }
   }, [])
+
+  // ── Pre-roll control ───────────────────────────────────────────────────────
+  /** End the pre-roll and restore the program it interrupted. */
+  const endPreroll = useCallback(() => {
+    if (prerollTimerRef.current != null) { clearTimeout(prerollTimerRef.current); prerollTimerRef.current = null }
+    const back = prerollReturnRef.current
+    prerollReturnRef.current = null
+    setPrerollEndsAt(null)
+    if (back) {
+      beginTransition()
+      setBuiltinProgram(back)
+      setActiveSlot(0)
+    }
+  }, [beginTransition])
+
+  /** Drop the pre-roll without restoring — used when the operator cuts manually. */
+  const cancelPreroll = useCallback(() => {
+    if (prerollTimerRef.current != null) { clearTimeout(prerollTimerRef.current); prerollTimerRef.current = null }
+    prerollReturnRef.current = null
+    if (prerollEndsAtRef.current != null) setPrerollEndsAt(null)
+  }, [])
+
+  /** Take the program to the visualizer for `prerollSeconds`, then restore it. */
+  const beginPreroll = useCallback(() => {
+    const secs = prerollSecondsRef.current
+    prerollReturnRef.current = builtinProgramRef.current
+    beginTransition()
+    setBuiltinProgram({ layout: 'solo', slots: [VIZ_SLOT] })
+    setActiveSlot(0)
+    setPrerollEndsAt(Date.now() + secs * 1000)
+    if (prerollTimerRef.current != null) clearTimeout(prerollTimerRef.current)
+    prerollTimerRef.current = window.setTimeout(endPreroll, secs * 1000)
+  }, [beginTransition, endPreroll])
 
   // Compositor loop — renders the program layout + CG, with snapshot transitions.
   useEffect(() => {
@@ -502,16 +571,17 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       else if (sourceKey.startsWith('cam')) srcIdx = Number(sourceKey.slice(3))
       else return
       applyCut(srcIdx, transitionOverride)
-      // A manual cut is authoritative — reset the auto-cut clock and release
-      // any drop-mode ownership so the director never fights the operator.
+      // A manual cut is authoritative — reset the auto-cut clock, release any
+      // drop-mode ownership, and end any pre-roll so nothing fights the operator.
       autoLastCutRef.current = performance.now()
       dropStateRef.current.active = false
+      cancelPreroll()
     } else {
       if (sourceKey === 'viz') return
       const i = sourceKey.startsWith('cam') ? Number(sourceKey.slice(3)) : -1
       studio?.obsCut?.(i >= 0 ? OBS_SCENE_FOR_CAM[i] : sourceKey)
     }
-  }, [engineId, applyCut])
+  }, [engineId, applyCut, cancelPreroll])
 
   const setLayout = useCallback((layout: LayoutType) => {
     beginTransition()
@@ -548,6 +618,18 @@ export function EngineProvider({ children }: { children: ReactNode }) {
 
   const builtinRec = useBuiltinRecorder(getProgramStream)
   const builtinStream = useBuiltinStreamer(getProgramStream)
+
+  // Going live optionally runs a visualizer pre-roll before the program shows
+  // the cameras; ending the stream clears any pre-roll in progress.
+  const startStream = useCallback(async (rtmpUrl: string, streamKey: string) => {
+    await builtinStream.start(rtmpUrl, streamKey)
+    if (prerollEnabledRef.current) beginPreroll()
+  }, [builtinStream.start, beginPreroll])
+
+  const stopStream = useCallback(() => {
+    builtinStream.stop()
+    endPreroll()
+  }, [builtinStream.stop, endPreroll])
 
   // Auto-record at NAR show boundaries (built-in engine).
   const schedule = useSchedule()
@@ -647,7 +729,8 @@ export function EngineProvider({ children }: { children: ReactNode }) {
 
     const tick = () => {
       raf = requestAnimationFrame(tick)
-      if (bumperRef.current) return   // never disturb a bumper / ad break
+      if (bumperRef.current) return            // never disturb a bumper / ad break
+      if (prerollEndsAtRef.current != null) return   // hold during a stream pre-roll
       const lv = vizRef.current.levelsRef.current
       const now = performance.now()
       const ds = dropStateRef.current
@@ -727,8 +810,14 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     setRecordIso: builtinRec.setRecordIso,
     isoCount: engineId === 'builtin' ? builtinRec.isoCount : 0,
     streamStartedAt: engineId === 'builtin' ? builtinStream.startedAt : null,
-    startStream: builtinStream.start,
-    stopStream: builtinStream.stop,
+    startStream,
+    stopStream,
+    prerollEnabled,
+    setPrerollEnabled,
+    prerollSeconds,
+    setPrerollSeconds,
+    prerollEndsAt,
+    skipPreroll: endPreroll,
     cut,
     transition,
     setTransition,
