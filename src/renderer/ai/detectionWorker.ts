@@ -23,52 +23,54 @@ const ctx = self as unknown as {
 let faceLm: FaceLandmarker | null = null
 let poseLm: PoseLandmarker | null = null
 
-async function initModels(wasmBase: string, faceModel: string, poseModel: string, gpu: boolean) {
-  const vision = await FilesetResolver.forVisionTasks(wasmBase)
-  const face = await FaceLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: faceModel, delegate: gpu ? 'GPU' : 'CPU' },
-    runningMode: 'IMAGE',
-    numFaces: 5,
-    outputFaceBlendshapes: true,
-  })
-  // Pose is optional — the face landmarker is the critical detector. If the
-  // pose model is missing the worker still runs face-only.
-  let pose: PoseLandmarker | null = null
-  try {
-    if (poseModel) {
-      pose = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: poseModel, delegate: gpu ? 'GPU' : 'CPU' },
-        runningMode: 'IMAGE',
-        numPoses: 3,
-      })
-    }
-  } catch { pose = null }
-  return { face, pose }
-}
-
 ctx.onmessage = async (e: MessageEvent) => {
   const msg = e.data
 
   if (msg.type === 'init') {
-    // Local assets first, then CDN; GPU delegate first, then CPU. First that
-    // loads wins — the renderer always gets a working detector if one exists.
-    const attempts: [string, string, string, boolean][] = [
-      [msg.localWasm, msg.localFace, msg.localPose, true],
-      [msg.cdnWasm, msg.cdnFace, msg.cdnPose, true],
-      [msg.localWasm, msg.localFace, msg.localPose, false],
-      [msg.cdnWasm, msg.cdnFace, msg.cdnPose, false],
+    // ── face landmarker (required) — local then CDN, GPU then CPU ────────────
+    let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>> | null = null
+    let delegate: 'GPU' | 'CPU' = 'GPU'
+    const faceAttempts: [string, string, boolean][] = [
+      [msg.localWasm, msg.localFace, true],
+      [msg.cdnWasm, msg.cdnFace, true],
+      [msg.localWasm, msg.localFace, false],
+      [msg.cdnWasm, msg.cdnFace, false],
     ]
-    for (const [wasm, faceModel, poseModel, gpu] of attempts) {
+    for (const [wasm, faceModel, gpu] of faceAttempts) {
       if (!wasm || !faceModel) continue
       try {
-        const { face, pose } = await initModels(wasm, faceModel, poseModel, gpu)
-        faceLm = face
-        poseLm = pose
-        ctx.postMessage({ type: 'ready', delegate: gpu ? 'GPU' : 'CPU', pose: !!pose })
-        return
-      } catch { /* try the next source / delegate */ }
+        vision = await FilesetResolver.forVisionTasks(wasm)
+        faceLm = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: faceModel, delegate: gpu ? 'GPU' : 'CPU' },
+          runningMode: 'IMAGE',
+          numFaces: 5,
+          outputFaceBlendshapes: true,
+        })
+        delegate = gpu ? 'GPU' : 'CPU'
+        break
+      } catch { faceLm = null; vision = null }
     }
-    ctx.postMessage({ type: 'error', message: 'FaceLandmarker init failed' })
+    if (!faceLm || !vision) {
+      ctx.postMessage({ type: 'error', message: 'FaceLandmarker init failed' })
+      return
+    }
+    // ── pose landmarker (optional) — try every model + delegate combination ──
+    const poseAttempts: [string, boolean][] = [
+      [msg.localPose, true], [msg.cdnPose, true],
+      [msg.localPose, false], [msg.cdnPose, false],
+    ]
+    for (const [poseModel, gpu] of poseAttempts) {
+      if (!poseModel) continue
+      try {
+        poseLm = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: poseModel, delegate: gpu ? 'GPU' : 'CPU' },
+          runningMode: 'IMAGE',
+          numPoses: 3,
+        })
+        break
+      } catch { poseLm = null }
+    }
+    ctx.postMessage({ type: 'ready', delegate, pose: !!poseLm })
     return
   }
 

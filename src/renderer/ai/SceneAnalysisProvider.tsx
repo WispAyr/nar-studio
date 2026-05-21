@@ -60,6 +60,7 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     let cam = 0
     let logged = false
+    let posesSeen = false
     let usingFallback = false
     const cleanups: Array<() => void> = []
 
@@ -95,10 +96,15 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
       return -1
     }
 
-    const markRunning = (where: string, idx: number, n: number) => {
-      if (logged) return
-      logged = true
-      console.log(`[scene] analysis running (${where}) — cam${idx}: ${n} face(s)`)
+    const markRunning = (where: string, idx: number, faces: number, poses: number) => {
+      if (!logged) {
+        logged = true
+        console.log(`[scene] analysis running (${where}) — cam${idx}: ${faces} face(s), ${poses} body(ies)`)
+      }
+      if (!posesSeen && poses > 0) {
+        posesSeen = true
+        console.log('[scene] pose detection active — body skeletons are live')
+      }
     }
 
     // ── main-thread fallback — used only if the worker cannot start ──────────
@@ -127,7 +133,7 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
             // The main-thread fallback runs face-only (pose is worker-only, to
             // keep the fallback light) — passes empty poses.
             updateCamera(idx, resultToFaces(landmarker.detect(v)), [])
-            markRunning('main thread', idx, analysisRef.current[idx].faces.length)
+            markRunning('main thread', idx, analysisRef.current[idx].faces.length, 0)
           } catch (e) {
             if (!logged) { logged = true; console.warn('[scene] detect failed:', (e as Error).message) }
           }
@@ -201,7 +207,10 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
         if (msg.type === 'ready') {
           workerReady = true
           if (initTimeout) clearTimeout(initTimeout)
-          console.log(`[scene] detection worker ready (${msg.delegate}${msg.pose ? ' + pose' : ', face only'})`)
+          console.log(
+            `[scene] detection worker ready (${msg.delegate}` +
+            `${msg.pose ? ' + pose) — body skeletons enabled' : ') — pose model unavailable, face only'}`,
+          )
           setReady(true)
           tick()
         } else if (msg.type === 'error') {
@@ -209,7 +218,7 @@ export function SceneAnalysisProvider({ children }: { children: ReactNode }) {
         } else if (msg.type === 'result') {
           if (cancelled || usingFallback) return
           updateCamera(msg.cam, msg.faces, msg.poses ?? [])
-          markRunning('worker', msg.cam, msg.faces.length)
+          markRunning('worker', msg.cam, msg.faces.length, (msg.poses ?? []).length)
           schedule()   // the next detection is paced from the result
         }
       }
