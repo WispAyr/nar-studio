@@ -54,13 +54,11 @@ function softGain(error: number): number {
 
 export function AiTrackingProvider({ children }: { children: ReactNode }) {
   const { streams } = useCameraStreams()
-  const { analysis } = useSceneAnalysis()
+  const { analysisRef } = useSceneAnalysis()
   const [tracking, setTrackingState] = useState<boolean[]>(() => loadTracking())
 
   const trackingRef = useRef(tracking)
   trackingRef.current = tracking
-  const analysisRef = useRef(analysis)
-  analysisRef.current = analysis
   const streamsRef = useRef(streams)
   streamsRef.current = streams
   // Which cameras are live on the program — tracking pauses on these so an

@@ -91,6 +91,12 @@ interface VizContextValue {
   setCustomMode: (name: string) => void
   /** Open the folder where custom shaders live. */
   openShaderFolder: () => void
+  /**
+   * Register a consumer of the visualizer. While at least one is held the GPU
+   * pipeline renders; with none it idles (audio analysis keeps running).
+   * Returns a release function. Prefer the `useVizActive` hook.
+   */
+  acquire: () => () => void
 }
 
 const Ctx = createContext<VizContextValue | null>(null)
@@ -206,6 +212,9 @@ export function VizProvider({ children }: { children: ReactNode }) {
   const levelsRef = useRef<VizLevels>({
     bass: 0, mid: 0, treble: 0, level: 0, beat: 0, beatAt: 0, centroid: 0, beatPhase: 0,
   })
+  // How many things currently display the visualizer. When zero, the render
+  // loop skips the GPU passes — the viz only costs GPU when it is actually seen.
+  const consumersRef = useRef(0)
 
   const [customShaders, setCustomShaders] = useState<string[]>([])
   const [customMode, setCustomModeState] = useState<string | null>(() => localStorage.getItem('nar-viz-custom'))
@@ -582,6 +591,11 @@ export function VizProvider({ children }: { children: ReactNode }) {
       vuPeakL = vuLraw > vuPeakL ? vuLraw : Math.max(vuPeakL - 0.006, vuL)
       vuPeakR = vuRraw > vuPeakR ? vuRraw : Math.max(vuPeakR - 0.006, vuR)
 
+      // Nothing displays the visualizer — the audio analysis above keeps
+      // levelsRef live for beat FX and the director, but skip the costly
+      // 7-pass GPU render entirely until a consumer needs it.
+      if (consumersRef.current <= 0) return
+
       const prevIdx = 1 - cur
 
       // Pass 1 — scene. A loaded custom shader replaces the built-in program.
@@ -692,11 +706,16 @@ export function VizProvider({ children }: { children: ReactNode }) {
 
   const getCanvas = useCallback(() => canvasRef.current, [])
 
+  const acquire = useCallback(() => {
+    consumersRef.current += 1
+    return () => { consumersRef.current = Math.max(0, consumersRef.current - 1) }
+  }, [])
+
   return (
     <Ctx.Provider value={{
       getCanvas, mode, setMode, palette, setPalette, intensity, setIntensity,
       kaleido, setKaleido, autoCycle, setAutoCycle, audioActive, levelsRef,
-      customShaders, customMode, setCustomMode, openShaderFolder,
+      customShaders, customMode, setCustomMode, openShaderFolder, acquire,
     }}>
       {children}
     </Ctx.Provider>
@@ -707,4 +726,17 @@ export function useViz() {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useViz must be used within VizProvider')
   return ctx
+}
+
+/**
+ * While `active` is true, keep the visualizer's GPU pipeline rendering. Use it
+ * in any component that displays the viz canvas (the program, a preview, a
+ * camera backdrop) so the viz idles when nothing shows it.
+ */
+export function useVizActive(active: boolean): void {
+  const ctx = useContext(Ctx)
+  useEffect(() => {
+    if (!active || !ctx) return
+    return ctx.acquire()
+  }, [active, ctx])
 }

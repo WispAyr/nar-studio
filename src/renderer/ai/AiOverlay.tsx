@@ -26,12 +26,10 @@ const FEATURES: Conn[] = [
  * the tracked subject highlighted. Drop inside a relatively-positioned tile.
  */
 export function AiOverlay({ index }: { index: number }) {
-  const { analysis } = useSceneAnalysis()
+  const { analysisRef } = useSceneAnalysis()
   const { tracking } = useAiTracking()
   const { identities, presenceRef } = useRecognition()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const analysisRef = useRef(analysis)
-  analysisRef.current = analysis
   const trackingRef = useRef(tracking)
   trackingRef.current = tracking
   const identsRef = useRef(identities)

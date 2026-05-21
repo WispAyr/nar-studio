@@ -71,9 +71,7 @@ const Ctx = createContext<RecognitionContextValue | null>(null)
  */
 export function RecognitionProvider({ children }: { children: ReactNode }) {
   const { videoEls } = useCameraStreams()
-  const { analysis } = useSceneAnalysis()
-  const analysisRef = useRef(analysis)
-  analysisRef.current = analysis
+  const { analysisRef } = useSceneAnalysis()
 
   const storeRef = useRef<IdentityStore | null>(null)
   if (!storeRef.current) storeRef.current = new IdentityStore()

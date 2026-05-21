@@ -3,10 +3,8 @@ import {
   type ReactNode,
 } from 'react'
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision'
-import { useViz } from '../viz/VizProvider'
-
-const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite'
+import { useViz, useVizActive } from '../viz/VizProvider'
+import { localMediapipe, CDN_WASM, CDN_SEG_MODEL } from '../mediapipe'
 
 // Re-run the model ~25fps; recomposite ~30fps (the capture rate). The matte is
 // temporally smoothed to kill edge jitter, and the sharp presenter is laid
@@ -106,6 +104,9 @@ export function SegmentationProvider({ children }: { children: ReactNode }) {
   const configsRef = useRef(configs)
   configsRef.current = configs
 
+  // Keep the visualizer rendering whenever a camera uses it as a backdrop.
+  useVizActive(configs.some(c => c.mode === 'viz'))
+
   const segmenterRef = useRef<ImageSegmenter | null>(null)
   const workRef = useRef<(CamWork | null)[]>([null, null, null, null])
 
@@ -120,22 +121,36 @@ export function SegmentationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    const createSegmenter = async (wasmBase: string, modelPath: string) => {
+      const vision = await FilesetResolver.forVisionTasks(wasmBase)
+      return ImageSegmenter.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
+        runningMode: 'IMAGE',
+        outputCategoryMask: false,
+        outputConfidenceMasks: true,
+      })
+    }
     ;(async () => {
+      // Local bundled assets first (fast, offline); fall back to the CDN.
+      let seg: ImageSegmenter | null = null
       try {
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE)
-        const seg = await ImageSegmenter.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-          runningMode: 'IMAGE',
-          outputCategoryMask: false,
-          outputConfidenceMasks: true,
-        })
+        seg = await createSegmenter(localMediapipe('wasm'), localMediapipe('selfie_segmenter.tflite'))
         if (cancelled) { seg.close(); return }
-        segmenterRef.current = seg
-        setReady(true)
-        console.log('[segmentation] selfie segmenter ready')
+        console.log('[segmentation] selfie segmenter ready (local assets)')
       } catch (e) {
-        console.error('[segmentation] init failed:', (e as Error).message)
+        if (cancelled) return
+        console.warn('[segmentation] local assets unavailable — using CDN:', (e as Error).message)
+        try {
+          seg = await createSegmenter(CDN_WASM, CDN_SEG_MODEL)
+          if (cancelled) { seg.close(); return }
+          console.log('[segmentation] selfie segmenter ready (CDN)')
+        } catch (e2) {
+          console.error('[segmentation] init failed:', (e2 as Error).message)
+          return
+        }
       }
+      segmenterRef.current = seg
+      setReady(true)
     })()
     return () => {
       cancelled = true

@@ -1,7 +1,7 @@
 import { useDirector } from '../../ai/DirectorProvider'
 import { DIRECTOR_STYLES } from '../../ai/directorStyles'
 import { CAMERA_ROLES } from '../../ai/cameraRoles'
-import { useSceneAnalysis } from '../../ai/SceneAnalysisProvider'
+import { useAnalysisSnapshot } from '../../ai/SceneAnalysisProvider'
 import { PeopleSection } from './PeopleSection'
 
 /**
@@ -11,7 +11,7 @@ import { PeopleSection } from './PeopleSection'
  */
 export function DirectorPanel() {
   const { enabled, setEnabled, styleId, setStyleId, status, roles, setRole } = useDirector()
-  const { analysis } = useSceneAnalysis()
+  const analysis = useAnalysisSnapshot()
 
   return (
     <div className="flex flex-col gap-2 p-3 h-full overflow-y-auto">

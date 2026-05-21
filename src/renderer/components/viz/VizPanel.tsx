@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { useViz, VIZ_MODES, VIZ_GROUPS, VIZ_PALETTES } from '../../viz/VizProvider'
+import { useViz, useVizActive, VIZ_MODES, VIZ_GROUPS, VIZ_PALETTES } from '../../viz/VizProvider'
 import { useEngine } from '../../engine/EngineProvider'
 import { VIZ_SLOT } from '../../engine/types'
 
 export function VizPanel() {
   const viz = useViz()
   const engine = useEngine()
+  // The panel shows a live preview — keep the visualizer rendering while open.
+  useVizActive(true)
   const previewRef = useRef<HTMLCanvasElement>(null)
   const [levels, setLevels] = useState({
     bass: 0, mid: 0, treble: 0, level: 0, beat: 0, beatAt: 0, centroid: 0, beatPhase: 0,

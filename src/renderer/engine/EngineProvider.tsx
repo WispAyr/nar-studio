@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
 import { useCG } from '../cg/CGProvider'
-import { useViz } from '../viz/VizProvider'
+import { useViz, useVizActive } from '../viz/VizProvider'
 import { useGrade } from '../grade/GradeProvider'
 import { useSegmentation } from '../segmentation/SegmentationProvider'
 import { useSceneAnalysis } from '../ai/SceneAnalysisProvider'
@@ -130,11 +130,9 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   const seg = useSegmentation()
   const segRef = useRef(seg)
   segRef.current = seg
-  const { analysis } = useSceneAnalysis()
+  const { analysisRef } = useSceneAnalysis()
   const camSourcesRef = useRef(camSources)
   camSourcesRef.current = camSources
-  const analysisRef = useRef(analysis)
-  analysisRef.current = analysis
 
   const [engineId, setEngineIdState] = useState<EngineId>(
     () => (localStorage.getItem('nar-engine') as EngineId) || 'builtin'
@@ -159,6 +157,9 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   const [builtinProgram, setBuiltinProgram] = useState<BuiltinProgram>({ layout: 'solo', slots: [0] })
   const builtinProgramRef = useRef(builtinProgram)
   builtinProgramRef.current = builtinProgram
+
+  // Keep the visualizer rendering while it is live in the program.
+  useVizActive(builtinProgram.slots.includes(VIZ_SLOT))
 
   const [activeSlot, setActiveSlot] = useState(0)
   const activeSlotRef = useRef(activeSlot)

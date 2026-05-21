@@ -84,9 +84,7 @@ export function DirectorProvider({ children }: { children: ReactNode }) {
   const viz = useViz()
   const vizRef = useRef(viz)
   vizRef.current = viz
-  const { analysis } = useSceneAnalysis()
-  const analysisRef = useRef(analysis)
-  analysisRef.current = analysis
+  const { analysisRef } = useSceneAnalysis()
   const { streams } = useCameraStreams()
   const streamsRef = useRef(streams)
   streamsRef.current = streams
