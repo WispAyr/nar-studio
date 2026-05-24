@@ -90,6 +90,14 @@ contextBridge.exposeInMainWorld('studio', {
   oscSendMetrics: (metrics: Record<string, number>) => invoke('osc:metrics', { metrics }),
   oscSendEvent: (address: string, n?: number) => invoke('osc:event', { address, n: n ?? 1 }),
 
+  // Myriad Playout MM_TRIGGER inbound UDP bridge
+  myriadStatus: () => invoke('myriad:status'),
+  myriadSetEnabled: (enabled: boolean) => invoke('myriad:set-enabled', { enabled }),
+  myriadSetPort: (port: number) => invoke('myriad:set-port', { port }),
+  myriadSetHost: (host: string) => invoke('myriad:set-host', { host }),
+  onMyriadEvent: (cb: (e: any) => void) => on('myriad:event', cb),
+  onMyriadRaw: (cb: (s: string) => void) => on('myriad:raw', cb),
+
   // Unreal Engine companion launcher
   unrealStatus: () => invoke('unreal:status'),
   unrealStart: () => invoke('unreal:start'),

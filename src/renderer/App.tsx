@@ -43,10 +43,13 @@ import { BumperLibraryProvider } from './bumpers/BumperLibraryProvider'
 import { ScheduledFiresProvider } from './schedules/ScheduledFiresProvider'
 import { RundownProvider } from './rundown/RundownProvider'
 import { RundownTab } from './components/rundown/RundownTab'
+import { ShowsProvider } from './shows/ShowsProvider'
+import { ShowsPanel } from './components/shows/ShowsPanel'
+import { MyriadBridgeProvider } from './myriad/MyriadBridgeProvider'
 import { PopoutHost } from './popout/PopoutHost'
 import PopoutControls from './popout/PopoutControls'
 
-type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown'
+type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown' | 'shows'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
 
 export default function App() {
@@ -74,6 +77,8 @@ export default function App() {
                                       <BumperLibraryProvider>
                                         <ScheduledFiresProvider>
                                           <RundownProvider>
+                                            <ShowsProvider>
+                                            <MyriadBridgeProvider>
                                             <ToastProvider>
                                               <CommandRegistryProvider>
                                                 <PopoutHost>
@@ -85,6 +90,8 @@ export default function App() {
                                                 </PopoutHost>
                                               </CommandRegistryProvider>
                                             </ToastProvider>
+                                            </MyriadBridgeProvider>
+                                            </ShowsProvider>
                                           </RundownProvider>
                                         </ScheduledFiresProvider>
                                       </BumperLibraryProvider>
@@ -224,6 +231,7 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
           <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
             <div className="flex border-b border-surface-700 shrink-0">
               {([
+                { id: 'shows', label: 'Shows' },
                 { id: 'rundown', label: 'Run' },
                 { id: 'router', label: 'Router' },
                 { id: 'stream', label: 'Stream' },
@@ -246,6 +254,7 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
               ))}
             </div>
             <div className="flex-1 min-h-0 overflow-hidden">
+              {rightTab === 'shows' && <ShowsPanel />}
               {rightTab === 'rundown' && <RundownTab />}
               {rightTab === 'router' && <VideoRouter />}
               {rightTab === 'stream' && <StreamPanel />}

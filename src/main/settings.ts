@@ -15,6 +15,7 @@ const ALLOWED = new Set([
   'stream-profiles',
   'compliance-logger',
   'osc-bridge',
+  'myriad-bridge',
   'unreal-launcher',
   'broadcast-compressor',
 ])

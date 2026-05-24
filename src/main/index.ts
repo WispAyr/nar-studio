@@ -11,6 +11,7 @@ import { builtinStreamer } from './builtinStreamer'
 import { complianceLogger } from './complianceLogger'
 import { healthMonitor } from './healthMonitor'
 import { unrealLauncher, registerUnrealLauncherEvents, bindUnrealLauncherShutdown } from './unrealLauncher'
+import { myriadBridge } from './myriadBridge'
 import { cgAssets } from './cgAssets'
 import { vizShaders } from './vizShaders'
 import { popoutWindows } from './popoutWindows'
@@ -96,6 +97,15 @@ app.whenReady().then(async () => {
   schedulePoller.start()
   recordingManager.init()
   complianceLogger.startBackgroundSweep()
+  // Myriad MM_TRIGGER bridge — forward parsed events + raw packets to the
+  // renderer for the inspector UI. Wire-up only; the renderer decides what
+  // to do with each event (binding lives in the renderer's MyriadBridgeProvider).
+  myriadBridge.on('event', e => mainWindow?.webContents.send('myriad:event', e))
+  // Raw packets are stringified as latin1 + clipped to 256 chars so a noisy
+  // Myriad can't flood the renderer with megabyte payloads.
+  myriadBridge.on('raw', (buf: Buffer) => mainWindow?.webContents.send('myriad:raw', buf.toString('latin1').slice(0, 256)))
+  // If the operator previously opted in, restart the listener on app boot.
+  if (myriadBridge.getStatus().enabled) myriadBridge.start()
   healthMonitor.on('alert', a => mainWindow?.webContents.send('health:alert', a))
   healthMonitor.start()
   registerUnrealLauncherEvents(status => mainWindow?.webContents.send('unreal:status', status))
@@ -115,6 +125,7 @@ app.on('window-all-closed', async () => {
   complianceLogger.stopAll()
   hidManager.stop()
   schedulePoller.stop()
+  myriadBridge.stop()
   if (process.platform !== 'darwin') app.quit()
 })
 

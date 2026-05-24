@@ -9,6 +9,7 @@ import { builtinStreamer } from './builtinStreamer'
 import { complianceLogger } from './complianceLogger'
 import { healthMonitor } from './healthMonitor'
 import { oscBridge } from './osc'
+import { myriadBridge } from './myriadBridge'
 import { unrealLauncher } from './unrealLauncher'
 import { resetStores } from './settings'
 import { dialog } from 'electron'
@@ -108,6 +109,15 @@ export function registerIpcHandlers(ipc: IpcMain) {
   ipc.handle('osc:set-port', (_e, { port }) => oscBridge.setPort(port))
   ipc.handle('osc:metrics', (_e, { metrics }) => oscBridge.sendMetrics(metrics))
   ipc.handle('osc:event', (_e, { address, n }) => oscBridge.sendEvent(address, n))
+
+  // ── Myriad Playout MM_TRIGGER inbound UDP bridge ──────────────────────────
+  // Listener-only — see src/main/myriadBridge.ts + docs/myriad-integration.md.
+  // The renderer subscribes via 'myriad:event' / 'myriad:raw' broadcasts from
+  // index.ts; the binding from event → NAR action is a separate commit.
+  ipc.handle('myriad:status', () => myriadBridge.getStatus())
+  ipc.handle('myriad:set-enabled', (_e, { enabled }) => myriadBridge.setEnabled(enabled))
+  ipc.handle('myriad:set-port', (_e, { port }) => myriadBridge.setPort(port))
+  ipc.handle('myriad:set-host', (_e, { host }) => myriadBridge.setBindHost(host))
 
   // ── Unreal Engine companion launcher ──────────────────────────────────────
   ipc.handle('unreal:status', () => unrealLauncher.getStatus())
