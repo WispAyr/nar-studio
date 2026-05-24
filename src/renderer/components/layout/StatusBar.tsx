@@ -3,6 +3,7 @@ import { useEngine } from '../../engine/EngineProvider'
 import { useCameraStreams } from '../../camera/CameraStreamProvider'
 import { useViz } from '../../viz/VizProvider'
 import type { EngineId } from '../../engine/types'
+import { HealthIndicator } from '../../health/HealthIndicator'
 
 function FpsIndicator() {
   const { levelsRef } = useViz()
@@ -92,6 +93,7 @@ export function StatusBar() {
 
       <div className="flex-1" />
       <FpsIndicator />
+      <HealthIndicator />
       <span className="text-slate-700">NAR Studio Director v1.0</span>
     </div>
   )

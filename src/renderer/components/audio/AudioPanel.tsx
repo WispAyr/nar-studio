@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useViz } from '../../viz/VizProvider'
 import { useCompliance } from '../../compliance/ComplianceProvider'
 import { useBroadcastAudio, COMPRESSOR_PRESETS, type CompressorSettings } from '../../audio/BroadcastAudioProvider'
+import { CartWallButton } from '../cartwall/CartWallButton'
 
 const studio = (window as any).studio
 
@@ -191,6 +192,10 @@ export function AudioPanel() {
       </button>
 
       <ComplianceStrip />
+
+      {/* Cart wall — soundboard of stings/jingles/IDs that mix into the
+          broadcast bus pre-compressor via CartWallBroadcastBridge. */}
+      <CartWallButton />
 
       <span className="text-xs text-slate-700 shrink-0">— cam mics disabled</span>
 

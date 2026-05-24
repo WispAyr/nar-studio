@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld('studio', {
   onStreamEnded: (cb: () => void) => on('stream:ended', cb),
   onStreamStats: (cb: (s: any) => void) => on('stream:stats', cb),
 
+  // Health monitor
+  healthActive: () => invoke('health:active'),
+  healthDismiss: (id: string) => invoke('health:dismiss', { id }),
+  onHealthAlert: (cb: (a: any) => void) => on('health:alert', cb),
+
   // Compliance audio logger
   complianceStatus: () => invoke('compliance:status'),
   complianceSetEnabled: (enabled: boolean) => invoke('compliance:set-enabled', { enabled }),
@@ -94,6 +99,9 @@ contextBridge.exposeInMainWorld('studio', {
   unrealPickProject: () => invoke('unreal:pick-project'),
   onUnrealStatus: (cb: (s: any) => void) => on('unreal:status', cb),
 
+  // Factory reset
+  settingsResetStores: (names: string[]) => invoke('settings:reset-stores', { names }),
+
   // CG asset library
   cgList: () => invoke('cg:list'),
   cgOpenFolder: (category?: string) => invoke('cg:open-folder', { category }),
@@ -114,4 +122,9 @@ contextBridge.exposeInMainWorld('studio', {
   deleteStreamProfile: (id: string) => invoke('stream:delete-profile', { id }),
   startStream: (profileId?: string) => invoke('stream:start', { profileId }),
   stopStream: () => invoke('stream:stop'),
+
+  // Multi-monitor popout windows
+  popoutOpen: (view: string) => invoke('popout:open', { view }),
+  popoutCloseAll: () => invoke('popout:close-all'),
+  popoutList: () => invoke('popout:list'),
 })

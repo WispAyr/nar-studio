@@ -9,9 +9,11 @@ import { recordingManager } from './recording'
 import { builtinRecorder } from './builtinRecorder'
 import { builtinStreamer } from './builtinStreamer'
 import { complianceLogger } from './complianceLogger'
+import { healthMonitor } from './healthMonitor'
 import { unrealLauncher, registerUnrealLauncherEvents, bindUnrealLauncherShutdown } from './unrealLauncher'
 import { cgAssets } from './cgAssets'
 import { vizShaders } from './vizShaders'
+import { popoutWindows } from './popoutWindows'
 
 // The cg:// scheme serves CG assets to the renderer; privileged so assets
 // drawn onto the program canvas don't taint it (recording needs captureStream).
@@ -94,8 +96,11 @@ app.whenReady().then(async () => {
   schedulePoller.start()
   recordingManager.init()
   complianceLogger.startBackgroundSweep()
+  healthMonitor.on('alert', a => mainWindow?.webContents.send('health:alert', a))
+  healthMonitor.start()
   registerUnrealLauncherEvents(status => mainWindow?.webContents.send('unreal:status', status))
   bindUnrealLauncherShutdown()
+  popoutWindows.closeAllOnQuit()
   // Optional auto-launch — only fires if the operator opted in.
   unrealLauncher.bootIfRequested()
 

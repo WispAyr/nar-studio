@@ -133,8 +133,13 @@ export function CGProvider({ children }: { children: ReactNode }) {
     }
   }, [nowPlayingUrl])
 
-  // Live captions via Web Speech Recognition (Chromium-only).
-  const [captionsOn, setCaptionsOn] = useState(false)
+  // Live captions via Web Speech Recognition (Chromium-only). Persists so the
+  // operator doesn't have to re-enable after every restart.
+  const [captionsOn, setCaptionsOnState] = useState(() => localStorage.getItem('nar-captions-on') === 'on')
+  const setCaptionsOn = useCallback((on: boolean) => {
+    localStorage.setItem('nar-captions-on', on ? 'on' : 'off')
+    setCaptionsOnState(on)
+  }, [])
   const [captionText, setCaptionText] = useState('')
   useEffect(() => {
     if (!captionsOn || !SPEECH_AVAILABLE) return

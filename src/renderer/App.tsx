@@ -32,6 +32,15 @@ import { ComplianceProvider } from './compliance/ComplianceProvider'
 import { BroadcastAudioProvider } from './audio/BroadcastAudioProvider'
 import { OscBridgeProvider } from './external/OscBridge'
 import { UnrealLauncherProvider } from './external/UnrealLauncher'
+import { ToastProvider } from './toast/ToastProvider'
+import { CommandRegistryProvider } from './commands/CommandRegistry'
+import { CommandPalette } from './commands/CommandPalette'
+import { DefaultCommands } from './commands/DefaultCommands'
+import { HealthMonitorProvider } from './health/HealthMonitorProvider'
+import { CartWallProvider } from './cartwall/CartWallProvider'
+import { CartWallBroadcastBridge } from './cartwall/CartWallBroadcastBridge'
+import { PopoutHost } from './popout/PopoutHost'
+import PopoutControls from './popout/PopoutControls'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
@@ -56,8 +65,21 @@ export default function App() {
                             <ComplianceProvider>
                               <OscBridgeProvider>
                                 <UnrealLauncherProvider>
-                                  <Workspace />
-                                  <KeyboardHelp />
+                                  <HealthMonitorProvider>
+                                    <CartWallProvider>
+                                      <ToastProvider>
+                                        <CommandRegistryProvider>
+                                          <PopoutHost>
+                                            <CartWallBroadcastBridge />
+                                            <DefaultCommands />
+                                            <Workspace />
+                                            <KeyboardHelp />
+                                            <CommandPalette />
+                                          </PopoutHost>
+                                        </CommandRegistryProvider>
+                                      </ToastProvider>
+                                    </CartWallProvider>
+                                  </HealthMonitorProvider>
                                 </UnrealLauncherProvider>
                               </OscBridgeProvider>
                             </ComplianceProvider>
@@ -154,6 +176,9 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
               Studio Map
             </button>
           </div>
+
+          {/* Multi-monitor pop-out — PGM / Multiview to a second display */}
+          <PopoutControls />
 
           {/* Camera controls for selected camera */}
           <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '440px' }}>

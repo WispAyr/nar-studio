@@ -116,6 +116,15 @@ interface BroadcastAudioCtx {
   settings: CompressorSettings
   setSettings: (s: CompressorSettings) => void
   applyPreset: (id: string) => void
+
+  /**
+   * Mix an external MediaStream (e.g. the cart wall, a Discord guest, a
+   * file-based jingle player) into the broadcast chain pre-compressor —
+   * so it gets the same limiting/makeup as the desk mic. Returns an
+   * `unplug()` fn that disconnects the source cleanly. Safe to call
+   * before the audio context is ready; the wiring is deferred.
+   */
+  plugInputStream: (stream: MediaStream) => () => void
 }
 
 const Ctx = createContext<BroadcastAudioCtx | null>(null)
@@ -151,6 +160,11 @@ export function BroadcastAudioProvider({ children }: { children: ReactNode }) {
   const analyserL = useRef<AnalyserNode | null>(null)
   const analyserR = useRef<AnalyserNode | null>(null)
   const grRef = useRef(0)
+  // External streams plugged into the bus pre-compressor (e.g. cart wall,
+  // remote-guest audio). Held as a Map so we can disconnect on unplug AND
+  // re-wire them when the chain rebuilds for a new device.
+  interface PluggedSource { stream: MediaStream; node: MediaStreamAudioSourceNode | null }
+  const pluggedRef = useRef<Map<MediaStream, PluggedSource>>(new Map())
 
   // Mirror state into refs so the rebuild closure reads current values.
   const gainRef = useRef(gain); gainRef.current = gain
@@ -196,6 +210,10 @@ export function BroadcastAudioProvider({ children }: { children: ReactNode }) {
       destRef.current = null
       analyserL.current = null
       analyserR.current = null
+      // Drop the MediaStreamSource nodes — they belong to the closed context.
+      // The stream references stay in the map so a subsequent rebuild can
+      // re-attach them.
+      for (const entry of pluggedRef.current.values()) entry.node = null
       setProcessedStream(null)
     }
 
@@ -291,6 +309,19 @@ export function BroadcastAudioProvider({ children }: { children: ReactNode }) {
         limiter.connect(dest)
         destRef.current = dest
 
+        // Re-wire any pre-existing plugged streams (cart wall, etc) onto the
+        // fresh chain. They mix in pre-compressor so they share the mic's
+        // limiter + makeup — stings sit at the same on-air loudness.
+        for (const [stream, entry] of pluggedRef.current) {
+          try {
+            entry.node = ctx.createMediaStreamSource(stream)
+            entry.node.connect(compressor)
+          } catch (e) {
+            console.warn('[broadcast-audio] failed to re-plug stream:', e)
+            entry.node = null
+          }
+        }
+
         if (disposed) { teardown(); return }
         setProcessedStream(dest.stream)
       } catch (e) {
@@ -372,12 +403,37 @@ export function BroadcastAudioProvider({ children }: { children: ReactNode }) {
     if (preset) setSettingsState(preset.settings)
   }, [])
 
+  // Plug an external stream pre-compressor (cart wall, remote-guest audio,
+  // file-based jingle player). Wires immediately if the chain is up; falls
+  // back to deferred wiring on the next rebuild otherwise.
+  const plugInputStream = useCallback((stream: MediaStream): (() => void) => {
+    const ctx = ctxRef.current
+    const compressor = compressorRef.current
+    let node: MediaStreamAudioSourceNode | null = null
+    if (ctx && compressor) {
+      try {
+        node = ctx.createMediaStreamSource(stream)
+        node.connect(compressor)
+      } catch (e) {
+        console.warn('[broadcast-audio] plugInputStream failed:', e)
+        node = null
+      }
+    }
+    pluggedRef.current.set(stream, { stream, node })
+    return () => {
+      const entry = pluggedRef.current.get(stream)
+      if (entry?.node) { try { entry.node.disconnect() } catch { /* ignore */ } }
+      pluggedRef.current.delete(stream)
+    }
+  }, [])
+
   return (
     <Ctx.Provider value={{
       devices, selectedId, setSelectedId,
       gain, setGain, muted, setMuted,
       processedStream, analyserL, analyserR, grRef,
       settings, setSettings, applyPreset,
+      plugInputStream,
     }}>
       {children}
     </Ctx.Provider>

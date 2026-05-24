@@ -167,9 +167,40 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // ── Built-in engine state ─────────────────────────────────────────────────
-  const [builtinProgram, setBuiltinProgram] = useState<BuiltinProgram>({ layout: 'solo', slots: [0] })
+  // Layout + last operator-intended source persist so a restart doesn't snap
+  // back to solo + CAM1. We intentionally don't restore the *on-air* state
+  // (that would silently put a stale source back on the program canvas);
+  // instead we restore the *layout* + a hint of what the operator was using.
+  const [builtinProgram, setBuiltinProgram] = useState<BuiltinProgram>(() => {
+    try {
+      const layoutRaw = localStorage.getItem('nar-program-layout') as LayoutType | null
+      const slotsRaw = localStorage.getItem('nar-program-slots')
+      const layout: LayoutType = (layoutRaw === 'solo' || layoutRaw === 'split' || layoutRaw === 'pip') ? layoutRaw : 'solo'
+      const want = SLOT_COUNT[layout]
+      let slots: number[] = [0]
+      if (slotsRaw) {
+        const arr = JSON.parse(slotsRaw)
+        if (Array.isArray(arr) && arr.length === want && arr.every(n => typeof n === 'number')) slots = arr
+      }
+      // Pad / trim to the layout's slot count, defaulting any missing to CAM1.
+      while (slots.length < want) slots.push(0)
+      slots = slots.slice(0, want)
+      return { layout, slots }
+    } catch {
+      return { layout: 'solo', slots: [0] }
+    }
+  })
   const builtinProgramRef = useRef(builtinProgram)
   builtinProgramRef.current = builtinProgram
+  // Persist on every change. setBuiltinProgram is called from a dozen sites
+  // (operator click, AI director, keyboard shortcut, viz cut, etc), so the
+  // single effect is the simplest robust hook.
+  useEffect(() => {
+    try {
+      localStorage.setItem('nar-program-layout', builtinProgram.layout)
+      localStorage.setItem('nar-program-slots', JSON.stringify(builtinProgram.slots))
+    } catch { /* ignore */ }
+  }, [builtinProgram.layout, builtinProgram.slots])
 
   // Keep the visualizer rendering while it is live in the program.
   useVizActive(builtinProgram.slots.includes(VIZ_SLOT))

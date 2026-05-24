@@ -7,11 +7,14 @@ import { streamManager } from './stream'
 import { builtinRecorder } from './builtinRecorder'
 import { builtinStreamer } from './builtinStreamer'
 import { complianceLogger } from './complianceLogger'
+import { healthMonitor } from './healthMonitor'
 import { oscBridge } from './osc'
 import { unrealLauncher } from './unrealLauncher'
+import { resetStores } from './settings'
 import { dialog } from 'electron'
 import { cgAssets } from './cgAssets'
 import { vizShaders } from './vizShaders'
+import { popoutWindows, type PopoutView } from './popoutWindows'
 
 export function registerIpcHandlers(ipc: IpcMain) {
 
@@ -94,6 +97,10 @@ export function registerIpcHandlers(ipc: IpcMain) {
   ipc.handle('compliance:sweep', () => complianceLogger.sweep())
   ipc.handle('compliance:open-folder', () => complianceLogger.openFolder())
 
+  // ── Health monitor (disk + encoder + recorder + compliance alerts) ───────
+  ipc.handle('health:active', () => healthMonitor.getActive())
+  ipc.handle('health:dismiss', (_e, { id }) => healthMonitor.dismiss(id))
+
   // ── OSC bridge to external visualization engines (Unreal / TouchDesigner / …)
   ipc.handle('osc:status', () => oscBridge.getStatus())
   ipc.handle('osc:set-enabled', (_e, { enabled }) => oscBridge.setEnabled(enabled))
@@ -123,6 +130,9 @@ export function registerIpcHandlers(ipc: IpcMain) {
     })
     return res.canceled ? '' : (res.filePaths[0] ?? '')
   })
+
+  // ── Factory-reset persistence (called by the renderer reset flow) ─────────
+  ipc.handle('settings:reset-stores', (_e, { names }) => resetStores(names ?? []))
 
   // ── Custom visualizer shaders ─────────────────────────────────────────────
   ipc.handle('viz-shaders:list', () => vizShaders.list())
@@ -169,4 +179,9 @@ export function registerIpcHandlers(ipc: IpcMain) {
   ipc.handle('stream:delete-profile', (_e, { id }) => streamManager.deleteProfile(id))
   ipc.handle('stream:start', (_e, { profileId }) => streamManager.startStream(profileId))
   ipc.handle('stream:stop', () => streamManager.stopStream())
+
+  // ── Multi-monitor popout windows ──────────────────────────────────────────
+  ipc.handle('popout:open', (_e, { view }: { view: PopoutView }) => popoutWindows.openPopout(view))
+  ipc.handle('popout:close-all', () => { popoutWindows.closeAll(); return { ok: true } })
+  ipc.handle('popout:list', () => popoutWindows.list())
 }
