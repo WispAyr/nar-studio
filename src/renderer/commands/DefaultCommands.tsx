@@ -15,6 +15,8 @@ import { useOsc } from '../external/OscBridge'
 import { useUnreal } from '../external/UnrealLauncher'
 import { useReplay } from '../replay/ReplayProvider'
 import { useCG, TITLE_TEMPLATES } from '../cg/CGProvider'
+import { useRundown } from '../rundown/RundownProvider'
+import { useBumperLibrary } from '../bumpers/BumperLibraryProvider'
 import { resetAllSettings } from '../settings/resetSettings'
 
 const studio = (window as any).studio
@@ -28,6 +30,8 @@ export function DefaultCommands() {
   const unreal = useUnreal()
   const replay = useReplay()
   const cg = useCG()
+  const rundown = useRundown()
+  const bumpers = useBumperLibrary()
 
   // We register a batch of commands on mount and unregister all on unmount,
   // so a hot-reload doesn't end up with stale handlers. Each registration's
@@ -244,6 +248,60 @@ export function DefaultCommands() {
       },
     })
 
+    // ── Rundown — script-driven transport for the show ────────────────────
+    if (rundown.rows.length > 0) {
+      add({
+        id: 'rundown.start',
+        label: 'Start Rundown',
+        hint: 'Jump to row 0 and fire its actions',
+        group: 'Rundown',
+        run: () => rundown.start(),
+      })
+    }
+    add({
+      id: 'rundown.advance',
+      label: 'Advance Rundown',
+      hint: 'Move to the next row',
+      hotkey: 'shift+n',
+      group: 'Rundown',
+      run: () => rundown.advance(),
+    })
+    add({
+      id: 'rundown.stop',
+      label: 'Stop Rundown',
+      hint: 'Drop all takeover cards, clear current row',
+      group: 'Rundown',
+      run: () => rundown.stop(),
+    })
+    add({
+      id: 'rundown.auto-toggle',
+      label: rundown.autoAdvance ? 'Disable Rundown Auto-Advance' : 'Enable Rundown Auto-Advance',
+      hint: 'Auto-fire the next row when the timer runs out',
+      group: 'Rundown',
+      run: () => rundown.setAutoAdvance(!rundown.autoAdvance),
+    })
+
+    // ── Bumpers ────────────────────────────────────────────────────────────
+    for (const b of bumpers.bumpers) {
+      const id = b.id
+      add({
+        id: `bumper.fire.${id}`,
+        label: `Bumper · ${b.label}`,
+        hint: 'Full-screen video sting',
+        group: 'Bumpers',
+        run: () => bumpers.fire(id),
+      })
+    }
+    if (bumpers.isPlaying) {
+      add({
+        id: 'bumper.stop',
+        label: 'Stop Bumper',
+        hint: 'Cut the active sting',
+        group: 'Bumpers',
+        run: () => bumpers.stop(),
+      })
+    }
+
     // ── Settings ───────────────────────────────────────────────────────────
     add({
       id: 'settings.reset-all',
@@ -268,11 +326,13 @@ export function DefaultCommands() {
     // for `register`, so identity churn is bounded by the toggle states.
   }, [
     register,
-    engine, viz, compliance, osc, unreal, replay, cg,
+    engine, viz, compliance, osc, unreal, replay, cg, rundown, bumpers,
     viz.kaleido, viz.autoCycle,
     osc.status?.enabled, unreal.status?.state, unreal.status?.unrealExe,
     replay.enabled,
     compliance.status?.enabled,
+    rundown.autoAdvance, rundown.rows.length,
+    bumpers.bumpers.length, bumpers.isPlaying,
   ])
 
   return null

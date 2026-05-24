@@ -1,4 +1,6 @@
 import { useCG, TITLE_TEMPLATES } from '../../cg/CGProvider'
+import { BumperLibraryPanel } from '../bumpers/BumperLibraryPanel'
+import { ScheduledFiresPanel } from '../schedules/ScheduledFiresPanel'
 import { useEngine } from '../../engine/EngineProvider'
 
 const BLENDS: { value: GlobalCompositeOperation; label: string }[] = [
@@ -253,6 +255,32 @@ export function CGPanel() {
           </div>
         )
       })}
+
+      {/* Bumper library — fire .mp4/.webm stings through the existing engine
+          bumper path (full-screen takeover video, returns to program when done). */}
+      <details className="rounded border border-surface-800 bg-surface-900/50 group">
+        <summary className="px-2 py-1.5 text-xs text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-300 select-none flex items-center justify-between">
+          <span>Bumper Library · video stings</span>
+          <span className="text-[10px] text-slate-700 group-open:hidden">▾</span>
+          <span className="text-[10px] text-slate-700 hidden group-open:inline">▴</span>
+        </summary>
+        <div className="border-t border-surface-800">
+          <BumperLibraryPanel />
+        </div>
+      </details>
+
+      {/* Scheduled auto-fires — cron-style rules that toggle takeover cards
+          at minute-of-hour marks (e.g. sponsor at xx:15, BRB at xx:55). */}
+      <details className="rounded border border-surface-800 bg-surface-900/50 group">
+        <summary className="px-2 py-1.5 text-xs text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-300 select-none flex items-center justify-between">
+          <span>Scheduled Auto-Fires</span>
+          <span className="text-[10px] text-slate-700 group-open:hidden">▾</span>
+          <span className="text-[10px] text-slate-700 hidden group-open:inline">▴</span>
+        </summary>
+        <div className="border-t border-surface-800">
+          <ScheduledFiresPanel />
+        </div>
+      </details>
     </div>
   )
 }

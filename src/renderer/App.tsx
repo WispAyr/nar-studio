@@ -39,10 +39,14 @@ import { DefaultCommands } from './commands/DefaultCommands'
 import { HealthMonitorProvider } from './health/HealthMonitorProvider'
 import { CartWallProvider } from './cartwall/CartWallProvider'
 import { CartWallBroadcastBridge } from './cartwall/CartWallBroadcastBridge'
+import { BumperLibraryProvider } from './bumpers/BumperLibraryProvider'
+import { ScheduledFiresProvider } from './schedules/ScheduledFiresProvider'
+import { RundownProvider } from './rundown/RundownProvider'
+import { RundownTab } from './components/rundown/RundownTab'
 import { PopoutHost } from './popout/PopoutHost'
 import PopoutControls from './popout/PopoutControls'
 
-type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director'
+type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
 
 export default function App() {
@@ -67,17 +71,23 @@ export default function App() {
                                 <UnrealLauncherProvider>
                                   <HealthMonitorProvider>
                                     <CartWallProvider>
-                                      <ToastProvider>
-                                        <CommandRegistryProvider>
-                                          <PopoutHost>
-                                            <CartWallBroadcastBridge />
-                                            <DefaultCommands />
-                                            <Workspace />
-                                            <KeyboardHelp />
-                                            <CommandPalette />
-                                          </PopoutHost>
-                                        </CommandRegistryProvider>
-                                      </ToastProvider>
+                                      <BumperLibraryProvider>
+                                        <ScheduledFiresProvider>
+                                          <RundownProvider>
+                                            <ToastProvider>
+                                              <CommandRegistryProvider>
+                                                <PopoutHost>
+                                                  <CartWallBroadcastBridge />
+                                                  <DefaultCommands />
+                                                  <Workspace />
+                                                  <KeyboardHelp />
+                                                  <CommandPalette />
+                                                </PopoutHost>
+                                              </CommandRegistryProvider>
+                                            </ToastProvider>
+                                          </RundownProvider>
+                                        </ScheduledFiresProvider>
+                                      </BumperLibraryProvider>
                                     </CartWallProvider>
                                   </HealthMonitorProvider>
                                 </UnrealLauncherProvider>
@@ -214,6 +224,7 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
           <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
             <div className="flex border-b border-surface-700 shrink-0">
               {([
+                { id: 'rundown', label: 'Run' },
                 { id: 'router', label: 'Router' },
                 { id: 'stream', label: 'Stream' },
                 { id: 'recording', label: 'Record' },
@@ -235,6 +246,7 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
               ))}
             </div>
             <div className="flex-1 min-h-0 overflow-hidden">
+              {rightTab === 'rundown' && <RundownTab />}
               {rightTab === 'router' && <VideoRouter />}
               {rightTab === 'stream' && <StreamPanel />}
               {rightTab === 'recording' && <RecordingPanel />}
