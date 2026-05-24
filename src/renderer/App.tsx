@@ -46,8 +46,9 @@ import { RundownTab } from './components/rundown/RundownTab'
 import { ShowsProvider } from './shows/ShowsProvider'
 import { ShowsPanel } from './components/shows/ShowsPanel'
 import { MyriadBridgeProvider } from './myriad/MyriadBridgeProvider'
+import { MyriadActionBinder } from './myriad/MyriadActionBinder'
 import { PopoutHost } from './popout/PopoutHost'
-import PopoutControls from './popout/PopoutControls'
+import { SidebarMenu } from './components/layout/SidebarMenu'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown' | 'shows'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
@@ -83,6 +84,7 @@ export default function App() {
                                               <CommandRegistryProvider>
                                                 <PopoutHost>
                                                   <CartWallBroadcastBridge />
+                                                  <MyriadActionBinder />
                                                   <DefaultCommands />
                                                   <Workspace />
                                                   <KeyboardHelp />
@@ -172,30 +174,15 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
         {/* Right sidebar */}
         <div className="w-72 flex flex-col gap-1 shrink-0">
 
-          {/* Workspace shortcuts */}
-          <div className="grid grid-cols-3 gap-1 shrink-0">
-            <button
-              onClick={onOpenColour}
-              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
-            >
-              Colour
-            </button>
-            <button
-              onClick={onOpenStreamDeck}
-              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
-            >
-              Stream Deck
-            </button>
-            <button
-              onClick={onOpenStudio}
-              className="h-8 rounded bg-surface-800 hover:bg-surface-700 border border-surface-700 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white transition-colors"
-            >
-              Studio Map
-            </button>
-          </div>
-
-          {/* Multi-monitor pop-out — PGM / Multiview to a second display */}
-          <PopoutControls />
+          {/* Compact ≡ menu — workspaces (Colour / Stream Deck / Studio Map),
+              pop-out windows, factory reset. Pulled out of the visible UI to
+              free vertical space for the things the operator touches per-minute
+              rather than per-show. */}
+          <SidebarMenu
+            onOpenColour={onOpenColour}
+            onOpenStreamDeck={onOpenStreamDeck}
+            onOpenStudio={onOpenStudio}
+          />
 
           {/* Camera controls for selected camera */}
           <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '440px' }}>
@@ -227,42 +214,15 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
           {/* Global studio states — recall all camera positions at once */}
           <StudioStates />
 
-          {/* Tabbed lower panel: Router / Stream / Recording */}
+          {/* Tabbed lower panel — grouped 2-row grid: top row is Production
+              (the things the operator manages every show), bottom row is I/O
+              (the things they configure once and rarely touch). Each row gets
+              a hairline group label so the relationship is scannable. */}
           <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
-            <div className="flex border-b border-surface-700 shrink-0">
-              {([
-                { id: 'shows', label: 'Shows' },
-                { id: 'rundown', label: 'Run' },
-                { id: 'router', label: 'Router' },
-                { id: 'stream', label: 'Stream' },
-                { id: 'recording', label: 'Record' },
-                { id: 'cg', label: 'CG' },
-                { id: 'viz', label: 'Viz' },
-                { id: 'director', label: 'Direct' },
-              ] as { id: RightTab; label: string }[]).map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setRightTab(tab.id)}
-                  className={`flex-1 text-xs py-1.5 transition-colors ${
-                    rightTab === tab.id
-                      ? 'text-white border-b border-nar-red'
-                      : 'text-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {rightTab === 'shows' && <ShowsPanel />}
-              {rightTab === 'rundown' && <RundownTab />}
-              {rightTab === 'router' && <VideoRouter />}
-              {rightTab === 'stream' && <StreamPanel />}
-              {rightTab === 'recording' && <RecordingPanel />}
-              {rightTab === 'cg' && <CGPanel />}
-              {rightTab === 'viz' && <VizPanel />}
-              {rightTab === 'director' && <DirectorPanel />}
-            </div>
+            <SidebarTabs
+              tab={rightTab}
+              onChange={setRightTab}
+            />
           </div>
         </div>
       </div>
@@ -271,4 +231,77 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
       <StatusBar />
     </div>
   )
+}
+
+/**
+ * Two-row tabbed strip for the right sidebar.
+ *
+ * Row 1 — Production: the operator's per-show workspace.
+ * Row 2 — Input/Output: routing, broadcasting, recording, AI direction.
+ *
+ * Each tab is a compact pill with a single-glyph icon + short label, so the
+ * whole grid fits inside a 288px-wide column without truncating. The active
+ * tab gets a brand-red underline and white text; idle tabs are slate-500.
+ */
+function SidebarTabs({ tab, onChange }: { tab: RightTab; onChange: (t: RightTab) => void }) {
+  const PRODUCTION: { id: RightTab; label: string; icon: string; hint: string }[] = [
+    { id: 'shows', label: 'Shows', icon: '★', hint: 'Show definitions + global stream' },
+    { id: 'rundown', label: 'Run', icon: '▶', hint: 'Script-driven transport' },
+    { id: 'cg', label: 'CG', icon: 'T', hint: 'Titles + brand cards' },
+    { id: 'viz', label: 'Viz', icon: '◐', hint: 'Visualizer modes' },
+  ]
+  const IO: { id: RightTab; label: string; icon: string; hint: string }[] = [
+    { id: 'router', label: 'Route', icon: '⇄', hint: 'Source routing' },
+    { id: 'stream', label: 'Live', icon: '●', hint: 'Go live · simulcast · health' },
+    { id: 'recording', label: 'Rec', icon: '◉', hint: 'Recording + replay' },
+    { id: 'director', label: 'Direct', icon: '◇', hint: 'AI auto-cut' },
+  ]
+
+  const renderTab = (t: { id: RightTab; label: string; icon: string; hint: string }) => {
+    const active = tab === t.id
+    return (
+      <button
+        key={t.id}
+        onClick={() => onChange(t.id)}
+        title={t.hint}
+        className={`flex-1 flex items-center justify-center gap-1 px-1 py-1.5 transition-colors border-b ${
+          active
+            ? 'text-white border-nar-red bg-surface-800/60'
+            : 'text-slate-500 hover:text-slate-200 border-transparent'
+        }`}
+      >
+        <span className={`text-[11px] ${active ? 'text-nar-red' : 'text-slate-600'}`}>{t.icon}</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider">{t.label}</span>
+      </button>
+    )
+  }
+
+  return (
+    <>
+      <div className="shrink-0">
+        <div className="px-2 pt-1 text-[9px] text-slate-700 uppercase tracking-wider">Production</div>
+        <div className="flex">{PRODUCTION.map(renderTab)}</div>
+        <div className="px-2 pt-1 text-[9px] text-slate-700 uppercase tracking-wider border-t border-surface-800">I / O</div>
+        <div className="flex">{IO.map(renderTab)}</div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <SidebarTabBody tab={tab} />
+      </div>
+    </>
+  )
+}
+
+/** Renderer for the active sidebar tab's body. Kept separate from
+ *  SidebarTabs so the conditional cascade stays in one place — adding a new
+ *  tab is one entry in the registry array + one branch here. */
+function SidebarTabBody({ tab }: { tab: RightTab }) {
+  if (tab === 'shows') return <ShowsPanel />
+  if (tab === 'rundown') return <RundownTab />
+  if (tab === 'router') return <VideoRouter />
+  if (tab === 'stream') return <StreamPanel />
+  if (tab === 'recording') return <RecordingPanel />
+  if (tab === 'cg') return <CGPanel />
+  if (tab === 'viz') return <VizPanel />
+  if (tab === 'director') return <DirectorPanel />
+  return null
 }

@@ -65,6 +65,12 @@ interface BumperLibraryCtx {
   setHotkey: (id: string, key: string | null) => void
   setColor: (id: string, color: string) => void
   fire: (id: string) => void
+  /**
+   * Fire the first bumper whose label matches `name` (case-insensitive, after
+   * trimming). Used by the Myriad bridge to route `advert-start` events to a
+   * matching video sting. Returns true if a bumper was fired, false otherwise.
+   */
+  fireByName: (name: string) => boolean
   stop: () => void
 }
 
@@ -141,6 +147,23 @@ export function BumperLibraryProvider({ children }: { children: ReactNode }) {
     if (!b) return
     if (!b.url) return
     engine.rollBumper(b.url, b.label)
+  }, [engine])
+
+  const fireByName = useCallback((name: string): boolean => {
+    const target = name.trim().toLowerCase()
+    if (!target) return false
+    // Exact-match first; if nothing exact, fall back to a substring match
+    // (Myriad's item titles vary — "AYR CARPETS 30s" vs the bumper's plain
+    // "AYR CARPETS"). Best-effort routing; the inspector log shows what was
+    // attempted so the operator can rename their bumper to align.
+    const exact = bumpersRef.current.find(b => b.label.trim().toLowerCase() === target)
+    const partial = exact ?? bumpersRef.current.find(b =>
+      b.label.trim().toLowerCase().includes(target) ||
+      target.includes(b.label.trim().toLowerCase())
+    )
+    if (!partial?.url) return false
+    engine.rollBumper(partial.url, partial.label)
+    return true
   }, [engine])
 
   const stop = useCallback(() => {
@@ -234,8 +257,8 @@ export function BumperLibraryProvider({ children }: { children: ReactNode }) {
     isPlaying,
     addFile, remove,
     setLabel, setHotkey, setColor,
-    fire, stop,
-  }), [bumpers, isPlaying, addFile, remove, setLabel, setHotkey, setColor, fire, stop])
+    fire, fireByName, stop,
+  }), [bumpers, isPlaying, addFile, remove, setLabel, setHotkey, setColor, fire, fireByName, stop])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

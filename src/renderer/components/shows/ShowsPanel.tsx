@@ -3,6 +3,7 @@ import { useShows } from '../../shows/ShowsProvider'
 import { VIZ_MODES, VIZ_PALETTES } from '../../viz/VizProvider'
 import { TITLE_TEMPLATES } from '../../cg/CGProvider'
 import { useMyriadBridge } from '../../myriad/MyriadBridgeProvider'
+import { useMyriadBinderEnabled } from '../../myriad/MyriadActionBinder'
 import type { NarShow } from '../../shows/types'
 import type { LayoutType } from '../../engine/types'
 
@@ -488,6 +489,7 @@ function GlobalStreamSection() {
  */
 function MyriadBridgeSection() {
   const m = useMyriadBridge()
+  const [binderOn, setBinderOn] = useMyriadBinderEnabled()
   const [port, setLocalPort] = useState(m.status?.port ?? 5000)
   const [host, setLocalHost] = useState(m.status?.bindHost ?? '0.0.0.0')
   const status = m.status
@@ -579,8 +581,26 @@ function MyriadBridgeSection() {
             </div>
           )
         )}
+        {/* Event → NAR action binder. When off, the bridge keeps receiving
+            + logging but doesn't drive any NAR state. */}
+        <label className={`flex items-center gap-2 cursor-pointer p-1.5 rounded ${binderOn ? 'bg-nar-blue/15 border border-nar-blue/40' : 'bg-surface-800 border border-surface-700'}`}>
+          <input
+            type="checkbox" checked={binderOn}
+            onChange={e => setBinderOn(e.target.checked)}
+            className="accent-nar-blue"
+          />
+          <span className="text-[11px] text-slate-200 flex-1">
+            Drive NAR from Myriad triggers
+          </span>
+          {binderOn && <span className="text-[10px] text-nar-blue font-bold uppercase tracking-wider">live</span>}
+        </label>
         <div className="text-[10px] text-slate-700 leading-snug">
-          Receive-only. Event → NAR action binding ships in a follow-up commit.
+          When live: <span className="font-mono">show-start</span> → apply show ·
+          <span className="font-mono"> advert-start</span> → fire bumper by name ·
+          <span className="font-mono"> cart-fire</span> → fire cart by name ·
+          <span className="font-mono"> news-start</span> → news card ·
+          <span className="font-mono"> item-start</span> → set Now Playing.
+          Misses surface as toast warnings.
         </div>
       </div>
     </details>

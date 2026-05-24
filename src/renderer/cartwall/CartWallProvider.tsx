@@ -64,6 +64,12 @@ interface CartWallCtx {
   /** Set of slot ids whose audio buffer is loaded and ready to fire. */
   ready: ReadonlySet<string>
   fire: (id: string) => void
+  /**
+   * Fire the first ready slot whose label matches `name` (case-insensitive,
+   * substring fallback). Used by the Myriad bridge to route `cart-fire`
+   * events. Returns true if a slot was fired, false otherwise.
+   */
+  fireByName: (name: string) => boolean
   assign: (id: string, file: File) => Promise<void>
   clear: (id: string) => void
   setLabel: (id: string, label: string) => void
@@ -241,6 +247,24 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
     }, 250)
   }, [ensureContext])
 
+  // Find a slot whose label matches `name`. Used by the Myriad bridge for
+  // `cart-fire` routing — Myriad's cart-wall macro fires by item name, we
+  // match it against the operator's slot labels (case-insensitive, falls
+  // back to substring containment).
+  const fireByName = useCallback((name: string): boolean => {
+    const target = name.trim().toLowerCase()
+    if (!target) return false
+    const exact = slots.find(s => s.label.trim().toLowerCase() === target)
+    const partial = exact ?? slots.find(s => {
+      const lbl = s.label.trim().toLowerCase()
+      return lbl && (lbl.includes(target) || target.includes(lbl))
+    })
+    if (!partial) return false
+    if (!buffersRef.current.has(partial.id)) return false
+    fire(partial.id)
+    return true
+  }, [slots, fire])
+
   const clear = useCallback((id: string) => {
     // Stop any in-flight playback of this slot, drop the buffer + ready flag,
     // and reset the persisted source hint. Label/hotkey/colour stay so the
@@ -324,12 +348,12 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<CartWallCtx>(() => ({
     slots, flashing, ready,
-    fire, assign, clear,
+    fire, fireByName, assign, clear,
     setLabel, setHotkey, setColor,
     getOutputNode, getOutputStream, getAudioContext,
   }), [
     slots, flashing, ready,
-    fire, assign, clear,
+    fire, fireByName, assign, clear,
     setLabel, setHotkey, setColor,
     getOutputNode, getOutputStream, getAudioContext,
   ])
