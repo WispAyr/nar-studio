@@ -13,6 +13,13 @@ interface Props {
   captionText: string
   sponsorName?: string
   sponsorTagline?: string
+  newsHeadline?: string
+  newsSource?: string
+  newsTicker?: string
+  newsBreaking?: boolean
+  travelRoute?: string
+  travelStatus?: string
+  travelSeverity?: 'info' | 'warning' | 'alert'
 }
 
 function fmtTime(iso: string): string {
@@ -28,7 +35,12 @@ function fmtTime(iso: string): string {
  * compositor draws over the program. The static title is cached in a base
  * canvas; a per-frame loop composites it with a subtle audio-reactive sheen.
  */
-export function TitleLayer({ layer, elements, nowPlaying, captionText, sponsorName, sponsorTagline }: Props) {
+export function TitleLayer({
+  layer, elements, nowPlaying, captionText,
+  sponsorName, sponsorTagline,
+  newsHeadline, newsSource, newsTicker, newsBreaking,
+  travelRoute, travelStatus, travelSeverity,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const baseRef = useRef<HTMLCanvasElement | null>(null)
   if (!baseRef.current) {
@@ -74,6 +86,13 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText, sponsorNa
       captionText,
       sponsorName,
       sponsorTagline,
+      newsHeadline,
+      newsSource,
+      newsTicker,
+      newsBreaking,
+      travelRoute,
+      travelStatus,
+      travelSeverity,
     }
     const render = () => { rectRef.current = drawTitle(base, layer.template!, data) }
     render()
@@ -81,7 +100,7 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText, sponsorNa
     document.fonts?.ready.then(render).catch(() => {})
     // The embedded NAR logo decodes asynchronously — redraw when it's ready.
     cgAssetsReady.then(render).catch(() => {})
-  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline])
+  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline, newsHeadline, newsSource, newsTicker, newsBreaking, travelRoute, travelStatus, travelSeverity])
 
   // Per-frame: composite the cached title + a subtle audio-reactive sheen.
   // For animated full-screen takeover cards (BRB pulse, ON AIR ring, dashes)
@@ -129,7 +148,7 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText, sponsorNa
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [layer.template, schedule, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline])
+  }, [layer.template, schedule, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline, newsHeadline, newsSource, newsTicker, newsBreaking, travelRoute, travelStatus, travelSeverity])
 
   return <canvas ref={canvasRef} width={1920} height={1080} />
 }

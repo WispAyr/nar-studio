@@ -16,6 +16,8 @@ export type TitleTemplate =
   | 'now-on-air'
   | 'music-sweeper'
   | 'sponsor'
+  | 'news-banner'
+  | 'travel-banner'
 
 export interface CgAsset {
   category: string

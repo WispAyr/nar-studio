@@ -38,6 +38,8 @@ export type MyriadEventKind =
   | 'advert-end'
   | 'news-start'
   | 'news-end'
+  | 'travel-start'
+  | 'travel-end'
   | 'item-start'
   | 'item-end'
   | 'cart-fire'
@@ -97,6 +99,10 @@ function mapTypeToken(token: string): MyriadEventKind | null {
   if (t === 'ADV-END' || t === 'ADVERT-END') return 'advert-end'
   if (t === 'NEWS') return 'news-start'
   if (t === 'NEWS-END') return 'news-end'
+  // Travel bulletin — common at NAR Studio's regional radio scale, fired
+  // morning + evening rush via dedicated Myriad logs.
+  if (t === 'TRAVEL' || t === 'TRAFFIC') return 'travel-start'
+  if (t === 'TRAVEL-END' || t === 'TRAFFIC-END') return 'travel-end'
   if (t === 'SHOW' || t === 'PROGRAM' || t === 'PROGRAMME') return 'show-start'
   if (t === 'SHOW-END' || t === 'PROGRAM-END') return 'show-end'
   if (t === 'CART' || t === 'JINGLE' || t === 'SWEEPER') return 'cart-fire'
@@ -111,6 +117,7 @@ const VALID_EVENTS: ReadonlySet<MyriadEventKind> = new Set<MyriadEventKind>([
   'show-start', 'show-end',
   'advert-start', 'advert-end',
   'news-start', 'news-end',
+  'travel-start', 'travel-end',
   'item-start', 'item-end',
   'cart-fire',
 ])

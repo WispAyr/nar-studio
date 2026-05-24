@@ -152,6 +152,104 @@ export function CGPanel() {
         />
       </div>
 
+      {/* News text — drives the News takeover card */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-600 uppercase tracking-wider">News · text</span>
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer">
+            <input
+              type="checkbox" checked={cg.newsBreaking}
+              onChange={e => cg.setNews({ breaking: e.target.checked })}
+              className="accent-nar-red"
+            />
+            <span className={cg.newsBreaking ? 'text-nar-red font-bold uppercase tracking-wider' : ''}>BREAKING</span>
+          </label>
+        </div>
+        <input
+          type="text"
+          placeholder="Headline"
+          value={cg.newsHeadline}
+          onChange={e => cg.setNews({ headline: e.target.value })}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-red/60"
+        />
+        <div className="grid grid-cols-[1fr_auto] gap-1">
+          <input
+            type="text"
+            placeholder="Source (e.g. BBC News, Sky)"
+            value={cg.newsSource}
+            onChange={e => cg.setNews({ source: e.target.value })}
+            className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-red/60"
+          />
+          <button
+            onClick={() => cg.toggleTitle('news-banner')}
+            className={`text-[10px] py-1 px-2 rounded font-bold uppercase tracking-wider transition-colors ${
+              cg.layers.some(l => l.kind === 'title' && l.template === 'news-banner')
+                ? 'bg-nar-red text-white'
+                : 'bg-surface-800 text-slate-400 hover:text-white border border-surface-700'
+            }`}
+          >
+            On Air
+          </button>
+        </div>
+        <input
+          type="text"
+          placeholder="Ticker text (optional — scrolls along the bottom)"
+          value={cg.newsTicker}
+          onChange={e => cg.setNews({ ticker: e.target.value })}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-nar-red/60"
+        />
+      </div>
+
+      {/* Travel text — drives the Travel takeover card */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-600 uppercase tracking-wider">Travel · text</span>
+          <div className="flex gap-1">
+            {(['info', 'warning', 'alert'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => cg.setTravel({ severity: s })}
+                className={`text-[10px] py-0.5 px-1.5 rounded font-bold uppercase tracking-wider transition-colors ${
+                  cg.travelSeverity === s
+                    ? s === 'alert' ? 'bg-nar-red text-white'
+                      : s === 'warning' ? 'bg-nar-amber text-white'
+                      : 'bg-nar-green text-white'
+                    : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-[100px_1fr_auto] gap-1">
+          <input
+            type="text"
+            placeholder="A77"
+            value={cg.travelRoute}
+            onChange={e => cg.setTravel({ route: e.target.value })}
+            className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs font-mono font-bold text-slate-200 outline-none focus:border-nar-amber/60"
+          />
+          <input
+            type="text"
+            placeholder="Status (e.g. Long delays northbound near Symington)"
+            value={cg.travelStatus}
+            onChange={e => cg.setTravel({ status: e.target.value })}
+            className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-amber/60"
+          />
+          <button
+            onClick={() => cg.toggleTitle('travel-banner')}
+            className={`text-[10px] py-1 px-2 rounded font-bold uppercase tracking-wider transition-colors ${
+              cg.layers.some(l => l.kind === 'title' && l.template === 'travel-banner')
+                ? 'bg-nar-amber text-white'
+                : 'bg-surface-800 text-slate-400 hover:text-white border border-surface-700'
+            }`}
+          >
+            On Air
+          </button>
+        </div>
+      </div>
+
       {/* Now Playing inputs — drive the Now Playing title template */}
       <div className="flex flex-col gap-1">
         <span className="text-xs text-slate-600 uppercase tracking-wider">Now Playing · text</span>

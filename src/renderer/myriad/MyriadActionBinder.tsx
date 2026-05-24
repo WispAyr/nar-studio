@@ -8,9 +8,12 @@
  *   show-end      → shows.setCurrentShow(null)  (back to sustaining)
  *   advert-start  → bumpers.fireByName(name) — matching video sting on-air
  *   advert-end    → if a bumper is playing, stop it
- *   news-start    → fire the 'now-on-air' card with "NEWS" framing
- *                   (until we have a dedicated news-banner template)
- *   news-end      → drop the news card
+ *   news-start    → set headline (if carried in event.name) + fire the
+ *                   news-banner card
+ *   news-end      → drop the news-banner card
+ *   travel-start  → parse A77/M77-style route from event.name, set status,
+ *                   fire the travel-banner card
+ *   travel-end    → drop the travel-banner card
  *   cart-fire     → cartwall.fireByName(name) — operator-named sting cart
  *   item-start    → set the now-playing CG state if the event carries
  *                   {name, artist}
@@ -118,18 +121,44 @@ export function MyriadActionBinder() {
           break
         }
         case 'news-start': {
-          // Stand-in: use the now-on-air card with whatever show data is
-          // current. A dedicated 'news-banner' template lands in a follow-up.
-          const tpl = 'now-on-air' as const
+          // Push the headline from the event if Myriad carried one (some
+          // installs send the headline as the item name; others send a
+          // generic "News" and the operator pre-loads the headline via the
+          // CG panel). Then fire the news-banner card.
+          if (name) cgRef.current.setNews({ headline: name })
+          const tpl = 'news-banner' as const
           const onAir = cgRef.current.layers.some(l => l.kind === 'title' && l.template === tpl)
-          if (!onAir) {
-            cgRef.current.toggleTitle(tpl)
-            t.success('Myriad → news')
-          }
+          if (!onAir) cgRef.current.toggleTitle(tpl)
+          t.success(`Myriad → news${name ? ` · ${name}` : ''}`)
           break
         }
         case 'news-end': {
-          const tpl = 'now-on-air' as const
+          const tpl = 'news-banner' as const
+          const onAir = cgRef.current.layers.some(l => l.kind === 'title' && l.template === tpl)
+          if (onAir) cgRef.current.toggleTitle(tpl)
+          break
+        }
+        case 'travel-start': {
+          // Myriad's travel item is usually a single name field. Heuristic:
+          // if it looks like a route reference (A77 / M77 / B743) treat as
+          // the route; otherwise treat it as the status text.
+          if (name) {
+            if (/^[AMB]\d{1,4}(\s|$)/i.test(name)) {
+              const m = name.match(/^([AMB]\d{1,4})\s*(.*)$/i)
+              if (m) cgRef.current.setTravel({ route: m[1].toUpperCase(), status: m[2] || '' })
+              else cgRef.current.setTravel({ route: name })
+            } else {
+              cgRef.current.setTravel({ status: name })
+            }
+          }
+          const tpl = 'travel-banner' as const
+          const onAir = cgRef.current.layers.some(l => l.kind === 'title' && l.template === tpl)
+          if (!onAir) cgRef.current.toggleTitle(tpl)
+          t.success(`Myriad → travel${name ? ` · ${name}` : ''}`)
+          break
+        }
+        case 'travel-end': {
+          const tpl = 'travel-banner' as const
           const onAir = cgRef.current.layers.some(l => l.kind === 'title' && l.template === tpl)
           if (onAir) cgRef.current.toggleTitle(tpl)
           break

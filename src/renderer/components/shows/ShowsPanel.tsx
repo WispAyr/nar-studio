@@ -598,7 +598,8 @@ function MyriadBridgeSection() {
           When live: <span className="font-mono">show-start</span> → apply show ·
           <span className="font-mono"> advert-start</span> → fire bumper by name ·
           <span className="font-mono"> cart-fire</span> → fire cart by name ·
-          <span className="font-mono"> news-start</span> → news card ·
+          <span className="font-mono"> news-start</span> → news card (headline from event) ·
+          <span className="font-mono"> travel-start</span> → travel card (route auto-detected) ·
           <span className="font-mono"> item-start</span> → set Now Playing.
           Misses surface as toast warnings.
         </div>

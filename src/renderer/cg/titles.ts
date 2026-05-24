@@ -15,6 +15,20 @@ export interface TitleData {
   sponsorName?: string
   /** Optional sponsor strapline shown below the name. */
   sponsorTagline?: string
+  /** Headline shown on the news-banner takeover card. */
+  newsHeadline?: string
+  /** Source attribution for the news headline (e.g. "BBC News"). */
+  newsSource?: string
+  /** Looping ticker text shown along the bottom of the news-banner. Empty = no ticker. */
+  newsTicker?: string
+  /** When true, the news-banner uses the BREAKING NEWS treatment (pulsing badge). */
+  newsBreaking?: boolean
+  /** Route reference (A77, M77) for the travel-banner. */
+  travelRoute?: string
+  /** Status text for the travel-banner (e.g. "Long delays northbound — Glasgow"). */
+  travelStatus?: string
+  /** Severity tier for the travel-banner. Drives the badge colour. */
+  travelSeverity?: 'info' | 'warning' | 'alert'
 }
 
 /** Bounding box of a rendered title bar — used to clip the reactive sheen. */
@@ -85,6 +99,9 @@ export const ANIMATED_TEMPLATES: ReadonlySet<TitleTemplate> = new Set<TitleTempl
   'stand-by',
   'now-on-air',
   'music-sweeper',
+  // News + Travel banners animate their ticker / pulsing badge per frame.
+  'news-banner',
+  'travel-banner',
 ])
 
 export function isAnimatedTemplate(t: TitleTemplate | undefined): boolean {
@@ -104,6 +121,8 @@ export const TAKEOVER_TEMPLATES: ReadonlySet<TitleTemplate> = new Set<TitleTempl
   'now-on-air',
   'music-sweeper',
   'sponsor',
+  'news-banner',
+  'travel-banner',
 ])
 
 export function isTakeoverTemplate(t: TitleTemplate | undefined): boolean {
@@ -182,6 +201,18 @@ export function takeoverTransition(
     // Slide in from the bottom, exit upward — keeps the sponsor name moving.
     dy = (1 - eIn) * 140 - eOut * 120
     scale = 0.98 + 0.02 * eIn
+  } else if (template === 'news-banner') {
+    // News punches in like Now On Air but without the white flash — a quick
+    // scale-up + slight overshoot. Drops with a horizontal slide off-screen
+    // right, "wipe to the next item" feel.
+    scale = 0.94 + 0.06 * easeOutBack(pIn)
+    dx = eOut * 320
+    flash = 0
+  } else if (template === 'travel-banner') {
+    // Travel slides in from the right (highway-sign metaphor — overhead
+    // gantry passing overhead) and exits left.
+    dx = (1 - eIn) * 280 - eOut * 280
+    scale = 0.97 + 0.03 * eIn
   }
 
   return { alpha, scale, dx, dy, flash }
@@ -205,6 +236,8 @@ export function drawTitle(
   if (template === 'now-on-air') return nowOnAir(ctx, data)
   if (template === 'music-sweeper') return musicSweeper(ctx, data)
   if (template === 'sponsor') return sponsorCard(ctx, data)
+  if (template === 'news-banner') return newsBanner(ctx, data)
+  if (template === 'travel-banner') return travelBanner(ctx, data)
   return clock(ctx, data)
 }
 
@@ -1066,4 +1099,374 @@ function sponsorCard(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | n
   ctx.fillText('Now Ayrshire Radio · sponsor message', W / 2, 980)
 
   return null
+}
+
+/**
+ * News backdrop — a colder, redder shift of the brandBackdrop. Same grain,
+ * stripe and small NAR mark, but the glow is deep red instead of orange so
+ * the card immediately reads as "news" not "show open".
+ */
+function newsBackdrop(ctx: CanvasRenderingContext2D) {
+  const W = 1920, H = 1080
+  const base = ctx.createLinearGradient(0, 0, 0, H)
+  base.addColorStop(0, '#15101a')
+  base.addColorStop(1, '#0a0508')
+  ctx.fillStyle = base
+  ctx.fillRect(0, 0, W, H)
+
+  // Strong red glow off-centre.
+  const glow = ctx.createRadialGradient(W * 0.22, H * 0.36, 30, W * 0.22, H * 0.36, 1100)
+  glow.addColorStop(0, 'rgba(229,32,43,0.32)')
+  glow.addColorStop(0.4, 'rgba(229,32,43,0.18)')
+  glow.addColorStop(1, 'rgba(229,32,43,0)')
+  ctx.save()
+  ctx.globalCompositeOperation = 'screen'
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, W, H)
+  ctx.restore()
+
+  // Diagonal grain (same as brand backdrop).
+  ctx.save()
+  ctx.globalCompositeOperation = 'overlay'
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)'
+  ctx.lineWidth = 1
+  for (let y = -H; y < W + H; y += 8) {
+    ctx.beginPath()
+    ctx.moveTo(y, 0); ctx.lineTo(y + H, H)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Solid red top edge — broadcast-news lane marker.
+  ctx.fillStyle = RED
+  ctx.fillRect(0, 0, W, 8)
+  // Bottom orange-red stripe stays for brand continuity.
+  ctx.fillStyle = accent(ctx, H - 6, H)
+  ctx.fillRect(0, H - 6, W, 6)
+
+  // Station mark top-left (same as brandBackdrop) — red dot + caption.
+  ctx.save()
+  ctx.fillStyle = RED
+  ctx.beginPath()
+  ctx.arc(72, 64, 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = WHITE
+  ctx.font = '700 14px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('NOW AYRSHIRE RADIO · NEWS', 92, 65)
+  ctx.restore()
+}
+
+/**
+ * Travel backdrop — amber/charcoal motorway-sign aesthetic. Saturated
+ * yellow-amber glow, same grain + stripes.
+ */
+function travelBackdrop(ctx: CanvasRenderingContext2D) {
+  const W = 1920, H = 1080
+  const base = ctx.createLinearGradient(0, 0, 0, H)
+  base.addColorStop(0, '#16110a')
+  base.addColorStop(1, '#080604')
+  ctx.fillStyle = base
+  ctx.fillRect(0, 0, W, H)
+
+  const glow = ctx.createRadialGradient(W * 0.78, H * 0.34, 30, W * 0.78, H * 0.34, 1100)
+  glow.addColorStop(0, 'rgba(247,147,30,0.34)')
+  glow.addColorStop(0.4, 'rgba(247,170,30,0.18)')
+  glow.addColorStop(1, 'rgba(247,147,30,0)')
+  ctx.save()
+  ctx.globalCompositeOperation = 'screen'
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, W, H)
+  ctx.restore()
+
+  // Diagonal grain.
+  ctx.save()
+  ctx.globalCompositeOperation = 'overlay'
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)'
+  ctx.lineWidth = 1
+  for (let y = -H; y < W + H; y += 8) {
+    ctx.beginPath()
+    ctx.moveTo(y, 0); ctx.lineTo(y + H, H)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Amber top edge — highway-sign lane marker.
+  ctx.fillStyle = ORANGE
+  ctx.fillRect(0, 0, W, 8)
+  // Bottom stripe stays brand.
+  ctx.fillStyle = accent(ctx, H - 6, H)
+  ctx.fillRect(0, H - 6, W, 6)
+
+  // Station mark top-left.
+  ctx.save()
+  ctx.fillStyle = ORANGE
+  ctx.beginPath()
+  ctx.arc(72, 64, 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = WHITE
+  ctx.font = '700 14px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('NOW AYRSHIRE RADIO · TRAVEL', 92, 65)
+  ctx.restore()
+}
+
+/**
+ * "News" — full-screen takeover with a big red NEWS / BREAKING badge,
+ * operator headline, source attribution, and an optional looping ticker
+ * along the bottom. Designed for hard news interrupts mid-show.
+ */
+function newsBanner(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  newsBackdrop(ctx)
+
+  const W = 1920, H = 1080
+  const breaking = !!d.newsBreaking
+  const t = Date.now() / 1000
+
+  // ── Top-left NEWS badge ────────────────────────────────────────────────────
+  // A pulsing red square with white text. BREAKING NEWS gets a wider badge
+  // and a stronger pulse; regular news is calmer.
+  ctx.save()
+  const badgeY = 130
+  const badgeH = 88
+  const text = breaking ? 'BREAKING NEWS' : 'NEWS'
+  ctx.font = '900 56px Poppins, sans-serif'
+  const padX = 28
+  const badgeW = ctx.measureText(text).width + padX * 2
+  const pulse = breaking ? (0.5 + 0.5 * Math.sin(t * 4)) : 0.4
+  // Drop-shadow + main red fill.
+  ctx.shadowColor = `rgba(229,32,43,${0.45 + pulse * 0.35})`
+  ctx.shadowBlur = 32 + pulse * 24
+  ctx.fillStyle = RED
+  roundRect(ctx, 130, badgeY, badgeW, badgeH, 4)
+  ctx.fill()
+  ctx.restore()
+  ctx.fillStyle = WHITE
+  ctx.font = '900 56px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText(text, 130 + padX, badgeY + badgeH / 2 + 2)
+
+  // ── Headline ───────────────────────────────────────────────────────────────
+  const headline = (d.newsHeadline || 'Headline goes here — type it in the CG panel').toUpperCase()
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = WHITE
+  let fontSize = 144
+  ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  // Auto-shrink to fit. We give it three lines of room.
+  const maxW = W - 260
+  const maxLineH = 156
+  const lines = wrapText(ctx, headline, maxW, fontSize)
+  // If it would overflow 3 lines, shrink font + rewrap until it does.
+  let attempt = 0
+  let wrapped = lines
+  while (wrapped.length > 3 && fontSize > 64 && attempt < 12) {
+    fontSize -= 8
+    ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+    wrapped = wrapText(ctx, headline, maxW, fontSize)
+    attempt += 1
+  }
+  ctx.save()
+  ctx.shadowColor = 'rgba(229,32,43,0.45)'
+  ctx.shadowBlur = 32
+  let y = 380
+  for (const line of wrapped) {
+    ctx.fillText(line, 130, y)
+    y += Math.max(fontSize + 12, maxLineH * 0.55)
+  }
+  ctx.restore()
+
+  // ── Source attribution ────────────────────────────────────────────────────
+  if (d.newsSource) {
+    const sx = 130
+    const sy = Math.max(y + 30, H - 220)
+    // Red square accent + source name.
+    ctx.fillStyle = RED
+    ctx.fillRect(sx, sy - 22, 6, 26)
+    ctx.fillStyle = '#d0d4e0'
+    ctx.font = '500 32px Poppins, sans-serif'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(d.newsSource, sx + 18, sy)
+  }
+
+  // ── Ticker ─────────────────────────────────────────────────────────────────
+  const ticker = d.newsTicker?.trim() || ''
+  if (ticker) {
+    const tH = 78
+    const tY = H - tH
+    // Dark band over the bottom stripe.
+    ctx.fillStyle = 'rgba(8,4,8,0.92)'
+    ctx.fillRect(0, tY, W, tH - 6)
+    // BREAKING/NEWS marker on the left edge of the ticker.
+    ctx.fillStyle = RED
+    ctx.fillRect(0, tY, 220, tH - 6)
+    ctx.fillStyle = WHITE
+    ctx.font = '900 26px Poppins, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(breaking ? 'BREAKING' : 'LATEST', 110, tY + (tH - 6) / 2)
+    // Scrolling text. Speed ~ 80 px/s. Two copies so it wraps seamlessly.
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(230, tY, W - 230, tH - 6)
+    ctx.clip()
+    ctx.font = '500 30px Poppins, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    const speed = 80
+    const tickerW = ctx.measureText(ticker + '   •   ').width
+    const offset = (t * speed) % tickerW
+    const startX = 250 - offset
+    ctx.fillStyle = '#f0f0f4'
+    ctx.fillText(ticker + '   •   ', startX, tY + (tH - 6) / 2)
+    ctx.fillText(ticker + '   •   ', startX + tickerW, tY + (tH - 6) / 2)
+    ctx.restore()
+  }
+
+  // ── Bottom-right NAR logo ────────────────────────────────────────────────
+  if (narLogo.complete && narLogo.naturalWidth > 0 && !ticker) {
+    const lh = 56
+    const lw = Math.round(lh * narLogo.naturalWidth / narLogo.naturalHeight)
+    ctx.drawImage(narLogo, W - lw - 130, H - 110, lw, lh)
+  }
+
+  return null
+}
+
+/**
+ * "Travel" — motorway-sign-styled bulletin. Big amber route reference (A77,
+ * M77, M8) with status line and severity-tinted accent. Aimed at the
+ * morning/evening rush travel updates that NAR runs.
+ */
+function travelBanner(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  travelBackdrop(ctx)
+
+  const W = 1920, H = 1080
+  const t = Date.now() / 1000
+  const severity = d.travelSeverity || 'info'
+  const severityColor = severity === 'alert' ? RED
+                       : severity === 'warning' ? ORANGE
+                       : '#22c55e'
+
+  // ── Top-left TRAVEL badge ──────────────────────────────────────────────────
+  ctx.save()
+  const badgeY = 130
+  const badgeH = 88
+  const text = 'TRAVEL'
+  ctx.font = '900 56px Poppins, sans-serif'
+  const padX = 28
+  const badgeW = ctx.measureText(text).width + padX * 2
+  ctx.shadowColor = 'rgba(247,147,30,0.55)'
+  ctx.shadowBlur = 30
+  ctx.fillStyle = ORANGE
+  roundRect(ctx, 130, badgeY, badgeW, badgeH, 4)
+  ctx.fill()
+  ctx.restore()
+  ctx.fillStyle = '#16110a'
+  ctx.font = '900 56px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText(text, 130 + padX, badgeY + badgeH / 2 + 2)
+
+  // ── Severity pip beside the badge ─────────────────────────────────────────
+  const pipX = 130 + badgeW + 16
+  const pipY = badgeY + badgeH / 2
+  const pipPulse = severity === 'alert' ? (0.5 + 0.5 * Math.sin(t * 5)) : 0
+  ctx.save()
+  ctx.shadowColor = severityColor
+  ctx.shadowBlur = 12 + pipPulse * 20
+  ctx.fillStyle = severityColor
+  ctx.beginPath()
+  ctx.arc(pipX + 12, pipY, 12, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+  ctx.fillStyle = '#d0d4e0'
+  ctx.font = '500 28px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(severity.toUpperCase(), pipX + 36, pipY + 2)
+
+  // ── Route reference — gigantic, the focal element ─────────────────────────
+  const route = (d.travelRoute || 'A77').toUpperCase()
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  // Highway-sign chunky white-on-dark badge containing the route number.
+  const routeFont = 220
+  ctx.font = `900 ${routeFont}px Poppins, sans-serif`
+  const routeW = ctx.measureText(route).width
+  const boxX = 130
+  const boxY = 380
+  const boxH = routeFont + 40
+  const boxW = routeW + 80
+  // White outline + dark fill — classic UK motorway sign palette.
+  ctx.save()
+  ctx.fillStyle = '#0a0a14'
+  roundRect(ctx, boxX, boxY, boxW, boxH, 14)
+  ctx.fill()
+  ctx.lineWidth = 6
+  ctx.strokeStyle = WHITE
+  roundRect(ctx, boxX, boxY, boxW, boxH, 14)
+  ctx.stroke()
+  ctx.restore()
+  ctx.fillStyle = WHITE
+  ctx.shadowColor = 'rgba(255,255,255,0.4)'
+  ctx.shadowBlur = 12
+  ctx.fillText(route, boxX + 40, boxY + boxH * 0.78)
+  ctx.shadowBlur = 0
+
+  // ── Status text — large, white, can wrap to two lines ─────────────────────
+  const status = (d.travelStatus || 'Type the travel status in the CG panel').toUpperCase()
+  let statusSize = 84
+  ctx.font = `800 ${statusSize}px Poppins, sans-serif`
+  const statusMaxW = W - 260
+  let wrapped = wrapText(ctx, status, statusMaxW, statusSize)
+  let attempt = 0
+  while (wrapped.length > 2 && statusSize > 40 && attempt < 10) {
+    statusSize -= 6
+    ctx.font = `800 ${statusSize}px Poppins, sans-serif`
+    wrapped = wrapText(ctx, status, statusMaxW, statusSize)
+    attempt += 1
+  }
+  ctx.fillStyle = '#f0f0f4'
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.45)'
+  ctx.shadowBlur = 22
+  let sy = boxY + boxH + 90
+  for (const line of wrapped) {
+    ctx.fillText(line, 130, sy)
+    sy += statusSize + 12
+  }
+  ctx.restore()
+
+  // ── Bottom-right NAR logo ────────────────────────────────────────────────
+  if (narLogo.complete && narLogo.naturalWidth > 0) {
+    const lh = 56
+    const lw = Math.round(lh * narLogo.naturalWidth / narLogo.naturalHeight)
+    ctx.drawImage(narLogo, W - lw - 130, H - 110, lw, lh)
+  }
+
+  return null
+}
+
+/**
+ * Word-wrap helper for the big card headlines. Splits `text` into lines that
+ * each fit `maxW` at the currently-set font. Returns the lines.
+ */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number, _fontSize: number): string[] {
+  const words = text.split(/\s+/)
+  const lines: string[] = []
+  let line = ''
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w
+    if (ctx.measureText(test).width > maxW && line) {
+      lines.push(line)
+      line = w
+    } else {
+      line = test
+    }
+  }
+  if (line) lines.push(line)
+  return lines
 }

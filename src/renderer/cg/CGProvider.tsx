@@ -26,6 +26,8 @@ export const TITLE_TEMPLATES: { template: TitleTemplate; label: string; group?: 
   { template: 'now-on-air', label: 'Now On Air', group: 'takeover' },
   { template: 'music-sweeper', label: 'Music Sweeper', group: 'takeover' },
   { template: 'sponsor', label: 'Sponsor', group: 'takeover' },
+  { template: 'news-banner', label: 'News', group: 'takeover' },
+  { template: 'travel-banner', label: 'Travel', group: 'takeover' },
 ]
 
 interface NowPlaying { track: string; artist: string }
@@ -61,6 +63,24 @@ interface CGContextValue {
   /** Optional sponsor strapline shown below the name. */
   sponsorTagline: string
   setSponsor: (name: string, tagline?: string) => void
+
+  /** Headline rendered on the News takeover card. */
+  newsHeadline: string
+  /** Source attribution on the News card (e.g. "BBC News"). */
+  newsSource: string
+  /** Looping ticker text on the News card. Empty = no ticker. */
+  newsTicker: string
+  /** When true the News card uses the BREAKING NEWS treatment. */
+  newsBreaking: boolean
+  setNews: (patch: Partial<{ headline: string; source: string; ticker: string; breaking: boolean }>) => void
+
+  /** Route reference (A77 / M77) on the Travel card. */
+  travelRoute: string
+  /** Status text on the Travel card. */
+  travelStatus: string
+  /** Severity tier on the Travel card. */
+  travelSeverity: 'info' | 'warning' | 'alert'
+  setTravel: (patch: Partial<{ route: string; status: string; severity: 'info' | 'warning' | 'alert' }>) => void
 }
 
 const Ctx = createContext<CGContextValue | null>(null)
@@ -160,6 +180,33 @@ export function CGProvider({ children }: { children: ReactNode }) {
       setSponsorTaglineState(tagline)
       try { localStorage.setItem('nar-sponsor-tagline', tagline) } catch { /* ignore */ }
     }
+  }, [])
+
+  // News + Travel takeover state, persisted so operator's last headline /
+  // route survives a relaunch. Bound to the news-banner / travel-banner
+  // takeover cards; also wired into the Myriad bridge so a `news-start`
+  // packet that carries a name uses that as the headline.
+  const [newsHeadline, setNewsHeadlineState] = useState(() => localStorage.getItem('nar-news-headline') || '')
+  const [newsSource, setNewsSourceState] = useState(() => localStorage.getItem('nar-news-source') || '')
+  const [newsTicker, setNewsTickerState] = useState(() => localStorage.getItem('nar-news-ticker') || '')
+  const [newsBreaking, setNewsBreakingState] = useState(() => localStorage.getItem('nar-news-breaking') === '1')
+  const setNews = useCallback((patch: Partial<{ headline: string; source: string; ticker: string; breaking: boolean }>) => {
+    if (typeof patch.headline === 'string') { setNewsHeadlineState(patch.headline); try { localStorage.setItem('nar-news-headline', patch.headline) } catch {} }
+    if (typeof patch.source === 'string') { setNewsSourceState(patch.source); try { localStorage.setItem('nar-news-source', patch.source) } catch {} }
+    if (typeof patch.ticker === 'string') { setNewsTickerState(patch.ticker); try { localStorage.setItem('nar-news-ticker', patch.ticker) } catch {} }
+    if (typeof patch.breaking === 'boolean') { setNewsBreakingState(patch.breaking); try { localStorage.setItem('nar-news-breaking', patch.breaking ? '1' : '0') } catch {} }
+  }, [])
+
+  const [travelRoute, setTravelRouteState] = useState(() => localStorage.getItem('nar-travel-route') || 'A77')
+  const [travelStatus, setTravelStatusState] = useState(() => localStorage.getItem('nar-travel-status') || '')
+  const [travelSeverity, setTravelSeverityState] = useState<'info' | 'warning' | 'alert'>(() => {
+    const v = localStorage.getItem('nar-travel-severity')
+    return v === 'warning' || v === 'alert' ? v : 'info'
+  })
+  const setTravel = useCallback((patch: Partial<{ route: string; status: string; severity: 'info' | 'warning' | 'alert' }>) => {
+    if (typeof patch.route === 'string') { setTravelRouteState(patch.route); try { localStorage.setItem('nar-travel-route', patch.route) } catch {} }
+    if (typeof patch.status === 'string') { setTravelStatusState(patch.status); try { localStorage.setItem('nar-travel-status', patch.status) } catch {} }
+    if (patch.severity) { setTravelSeverityState(patch.severity); try { localStorage.setItem('nar-travel-severity', patch.severity) } catch {} }
   }, [])
 
   // Live captions via Web Speech Recognition (Chromium-only). Persists so the
@@ -311,12 +358,14 @@ export function CGProvider({ children }: { children: ReactNode }) {
       nowPlaying, setNowPlaying, nowPlayingUrl, setNowPlayingUrl,
       captionText, captionsOn, setCaptionsOn, captionsSupported: SPEECH_AVAILABLE,
       sponsorName, sponsorTagline, setSponsor,
+      newsHeadline, newsSource, newsTicker, newsBreaking, setNews,
+      travelRoute, travelStatus, travelSeverity, setTravel,
     }}>
       {/* Off-screen layer elements — decoded/rendered here, drawn onto the program canvas. */}
       <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none' }} aria-hidden>
         {layers.map(layer => {
           if (layer.kind === 'title') {
-            return <TitleLayer key={layer.id} layer={layer} elements={elements} nowPlaying={nowPlaying} captionText={captionText} sponsorName={sponsorName} sponsorTagline={sponsorTagline} />
+            return <TitleLayer key={layer.id} layer={layer} elements={elements} nowPlaying={nowPlaying} captionText={captionText} sponsorName={sponsorName} sponsorTagline={sponsorTagline} newsHeadline={newsHeadline} newsSource={newsSource} newsTicker={newsTicker} newsBreaking={newsBreaking} travelRoute={travelRoute} travelStatus={travelStatus} travelSeverity={travelSeverity} />
           }
           if (layer.kind === 'video') {
             return (

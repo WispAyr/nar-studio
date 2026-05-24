@@ -162,6 +162,8 @@ export interface MyriadEvent {
     | 'advert-end'
     | 'news-start'
     | 'news-end'
+    | 'travel-start'    // travel bulletin starting (NAR regional habit)
+    | 'travel-end'
     | 'item-start'      // a track / jingle / sweeper starting
     | 'item-end'
     | 'cart-fire'       // hot-cart fired from Myriad's cart wall
