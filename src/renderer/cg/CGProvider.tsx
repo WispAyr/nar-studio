@@ -9,12 +9,21 @@ const DEFAULT_BLEND: GlobalCompositeOperation = 'source-over'
 /** Exit-animation length — kept in step with the compositor's LAYER_OUT_MS. */
 const LAYER_EXIT_MS = 380
 
-export const TITLE_TEMPLATES: { template: TitleTemplate; label: string }[] = [
-  { template: 'show-lower-third', label: 'Show Lower-Third' },
-  { template: 'up-next', label: 'Up Next' },
-  { template: 'now-playing', label: 'Now Playing' },
-  { template: 'captions', label: 'Captions' },
-  { template: 'clock', label: 'Clock' },
+export const TITLE_TEMPLATES: { template: TitleTemplate; label: string; group?: 'overlay' | 'takeover' }[] = [
+  // Overlays — sit on top of the live picture, don't replace it.
+  { template: 'show-lower-third', label: 'Show Lower-Third', group: 'overlay' },
+  { template: 'up-next', label: 'Up Next', group: 'overlay' },
+  { template: 'now-playing', label: 'Now Playing', group: 'overlay' },
+  { template: 'captions', label: 'Captions', group: 'overlay' },
+  { template: 'clock', label: 'Clock', group: 'overlay' },
+  // Full-screen brand takeover cards — fire one of these and it replaces
+  // the program output entirely until removed. Designed for breaks,
+  // pre-show holds, show opens, recovery from technical issues.
+  { template: 'be-right-back', label: 'Be Right Back', group: 'takeover' },
+  { template: 'stand-by', label: 'Stand By', group: 'takeover' },
+  { template: 'coming-up', label: 'Coming Up', group: 'takeover' },
+  { template: 'technical-difficulty', label: 'Technical Difficulty', group: 'takeover' },
+  { template: 'now-on-air', label: 'Now On Air', group: 'takeover' },
 ]
 
 interface NowPlaying { track: string; artist: string }

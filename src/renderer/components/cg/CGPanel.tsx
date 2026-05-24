@@ -80,11 +80,11 @@ export function CGPanel() {
         </div>
       )}
 
-      {/* Auto-populated titles — fed live from the siphon schedule */}
+      {/* Auto-populated overlays — sit on top of the program picture */}
       <div className="flex flex-col gap-1">
         <span className="text-xs text-slate-600 uppercase tracking-wider">Titles · auto</span>
         <div className="grid grid-cols-2 gap-1">
-          {TITLE_TEMPLATES.map(t => {
+          {TITLE_TEMPLATES.filter(t => t.group !== 'takeover').map(t => {
             const active = cg.layers.some(l => l.kind === 'title' && l.template === t.template)
             return (
               <button
@@ -97,6 +97,34 @@ export function CGPanel() {
                 }`}
               >
                 {t.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Full-screen brand takeover cards — break stings, hold cards, show
+          opens. Fire one to replace the program output, click again to drop. */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">
+          Brand Cards · full-screen
+        </span>
+        <div className="grid grid-cols-2 gap-1">
+          {TITLE_TEMPLATES.filter(t => t.group === 'takeover').map(t => {
+            const active = cg.layers.some(l => l.kind === 'title' && l.template === t.template)
+            return (
+              <button
+                key={t.template}
+                onClick={() => cg.toggleTitle(t.template)}
+                title={`Full-screen NAR-branded ${t.label.toLowerCase()} card`}
+                className={`relative text-xs px-2 py-1.5 rounded truncate text-left transition-colors overflow-hidden ${
+                  active
+                    ? 'bg-gradient-to-r from-nar-amber to-nar-red text-white shadow-md'
+                    : 'bg-surface-800 text-slate-300 hover:text-white hover:bg-surface-700 border border-surface-700'
+                }`}
+              >
+                <span className={`absolute left-0 top-0 bottom-0 w-1 ${active ? 'bg-white/80' : 'bg-nar-amber'}`} />
+                <span className="ml-2">{t.label}</span>
               </button>
             )
           })}

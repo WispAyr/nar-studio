@@ -51,6 +51,7 @@ export const VIZ_MODES = [
   { id: 31, label: 'Pace Display', group: 'Meters', hint: 'Pioneer-style BPM, beat grid + phase indicator' },
   { id: 32, label: 'Slate', group: 'Meters', hint: 'SMPTE bars + NAR ident + clock — pre-broadcast holding card' },
   { id: 33, label: 'Countdown', group: 'Meters', hint: 'Pre-broadcast "going live in…" countdown with LIVE flash' },
+  { id: 34, label: 'Brand Backdrop', group: 'Artistic', hint: 'Calm audio-reactive NAR-brand backdrop — pairs with the full-screen brand cards' },
 ] as const
 
 export const VIZ_PALETTES = [
@@ -253,7 +254,7 @@ export function VizProvider({ children }: { children: ReactNode }) {
 
   const [mode, setModeState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-mode'))
-    return v >= 0 && v <= 33 ? v : 1
+    return v >= 0 && v <= 34 ? v : 1
   })
   const [palette, setPaletteState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-palette'))

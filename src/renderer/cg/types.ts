@@ -1,6 +1,19 @@
 export type CgKind = 'image' | 'video' | 'title'
 
-export type TitleTemplate = 'show-lower-third' | 'up-next' | 'clock' | 'now-playing' | 'captions'
+export type TitleTemplate =
+  | 'show-lower-third'
+  | 'up-next'
+  | 'clock'
+  | 'now-playing'
+  | 'captions'
+  // Full-screen brand takeover cards — fire one for a "be right back" pause,
+  // a "stand by" pre-show hold, a "coming up" preview, a "technical
+  // difficulty" apology, or an "on-air" show open.
+  | 'be-right-back'
+  | 'stand-by'
+  | 'coming-up'
+  | 'technical-difficulty'
+  | 'now-on-air'
 
 export interface CgAsset {
   category: string

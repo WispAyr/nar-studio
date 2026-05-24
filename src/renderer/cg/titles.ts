@@ -71,6 +71,21 @@ function barFill(ctx: CanvasRenderingContext2D, top: number, bottom: number): Ca
   return g
 }
 
+/**
+ * Templates whose contents change every frame (breathing scale, pulsing
+ * dots, animated ON AIR ring, drifting dashes) — the TitleLayer redraws
+ * these per-frame instead of caching a single static base canvas.
+ */
+export const ANIMATED_TEMPLATES: ReadonlySet<TitleTemplate> = new Set<TitleTemplate>([
+  'be-right-back',
+  'stand-by',
+  'now-on-air',
+])
+
+export function isAnimatedTemplate(t: TitleTemplate | undefined): boolean {
+  return !!t && ANIMATED_TEMPLATES.has(t)
+}
+
 /** Render a NAR-branded title onto a 1920×1080 transparent canvas. */
 export function drawTitle(
   canvas: HTMLCanvasElement, template: TitleTemplate, data: TitleData,
@@ -82,7 +97,414 @@ export function drawTitle(
   if (template === 'up-next') return upNext(ctx, data)
   if (template === 'now-playing') return nowPlaying(ctx, data)
   if (template === 'captions') return captions(ctx, data)
+  if (template === 'be-right-back') return beRightBack(ctx)
+  if (template === 'stand-by') return standBy(ctx)
+  if (template === 'coming-up') return comingUp(ctx, data)
+  if (template === 'technical-difficulty') return technicalDifficulty(ctx)
+  if (template === 'now-on-air') return nowOnAir(ctx, data)
   return clock(ctx, data)
+}
+
+/**
+ * Shared backdrop for every full-screen takeover card — a deep navy radial
+ * gradient with a soft brand-orange glow off-centre and a quiet diagonal
+ * grain. Every card layers its typography over this so the family feels
+ * unified rather than five separate posters.
+ */
+function brandBackdrop(ctx: CanvasRenderingContext2D, opts: { glowAt?: 'left' | 'right' } = {}) {
+  const W = 1920, H = 1080
+  // Deep navy base, just shy of pure black so highlights pop without bloom.
+  const base = ctx.createLinearGradient(0, 0, 0, H)
+  base.addColorStop(0, '#0f1226')
+  base.addColorStop(1, '#070914')
+  ctx.fillStyle = base
+  ctx.fillRect(0, 0, W, H)
+
+  // Off-centre brand glow — orange→red→transparent. Painted with screen
+  // blending so it lifts the navy without flattening the gradient.
+  const gx = opts.glowAt === 'right' ? W * 0.78 : W * 0.22
+  const gy = H * 0.36
+  const glow = ctx.createRadialGradient(gx, gy, 30, gx, gy, 1100)
+  glow.addColorStop(0, 'rgba(247,147,30,0.32)')
+  glow.addColorStop(0.35, 'rgba(229,32,43,0.18)')
+  glow.addColorStop(1, 'rgba(229,32,43,0)')
+  ctx.save()
+  ctx.globalCompositeOperation = 'screen'
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, W, H)
+  ctx.restore()
+
+  // Subtle diagonal grain — built from a couple of cheap line passes rather
+  // than per-pixel noise. Keeps the file size sensible while killing the
+  // "flat gradient" feel under bloom.
+  ctx.save()
+  ctx.globalCompositeOperation = 'overlay'
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)'
+  ctx.lineWidth = 1
+  for (let y = -H; y < W + H; y += 8) {
+    ctx.beginPath()
+    ctx.moveTo(y, 0)
+    ctx.lineTo(y + H, H)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Bottom-edge brand-stripe — orange→red sliver, the wordmark accent.
+  const stripeH = 6
+  ctx.fillStyle = accent(ctx, H - stripeH, H)
+  ctx.fillRect(0, H - stripeH, W, stripeH)
+
+  // Top-left small dot + REC-style label so the operator instantly knows
+  // this is a station card, not stale content.
+  ctx.save()
+  ctx.fillStyle = RED
+  ctx.beginPath()
+  ctx.arc(72, 64, 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = WHITE
+  ctx.font = '700 14px Poppins, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText('NOW AYRSHIRE RADIO', 92, 65)
+  ctx.restore()
+}
+
+/** Centred long-form logo at a fixed y. Returns the bottom edge for layout. */
+function logoCentred(ctx: CanvasRenderingContext2D, cy: number, height: number): number {
+  if (!narLogo.complete || narLogo.naturalWidth === 0) return cy + height / 2
+  const w = Math.round(height * narLogo.naturalWidth / narLogo.naturalHeight)
+  const x = (1920 - w) / 2
+  const y = cy - height / 2
+  ctx.drawImage(narLogo, x, y, w, height)
+  return y + height
+}
+
+/** Subtle live "breathing" multiplier — drives card pulsations from a single
+ *  source so every card breathes in unison. Range ~[0.985, 1.015]. */
+function breathe(): number {
+  return 1 + 0.015 * Math.sin(Date.now() / 1200)
+}
+
+/**
+ * "Be Right Back" — the most-fired card. Massive BRB headline, NAR logo,
+ * "back in a moment" subtitle, animated three-dot loader pinning the eye.
+ */
+function beRightBack(ctx: CanvasRenderingContext2D): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'left' })
+
+  const W = 1920, H = 1080
+  const bRev = breathe()
+  ctx.save()
+  ctx.translate(W / 2, H / 2)
+  ctx.scale(bRev, bRev)
+  ctx.translate(-W / 2, -H / 2)
+
+  // Brand logo
+  logoCentred(ctx, 332, 92)
+
+  // Massive headline — track to dramatic letter-spacing.
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = WHITE
+  ctx.font = '900 220px Poppins, sans-serif'
+  // Soft shadow lifts it off the gradient
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.55)'
+  ctx.shadowBlur = 60
+  ctx.fillText('BE RIGHT BACK', W / 2, 640)
+  ctx.restore()
+
+  // Orange→red underline accent
+  const lineY = 686
+  const grad = accent(ctx, lineY - 4, lineY + 4)
+  ctx.fillStyle = grad
+  roundRect(ctx, W / 2 - 320, lineY, 640, 8, 4)
+  ctx.fill()
+
+  // Subtitle
+  ctx.fillStyle = '#d8d8e8'
+  ctx.font = '500 36px Poppins, sans-serif'
+  ctx.fillText('We will return shortly — stay tuned', W / 2, 768)
+
+  // Animated three-dot loader — phase off Date.now so it never freezes
+  const t = Date.now() / 480
+  for (let i = 0; i < 3; i++) {
+    const phase = (t - i * 0.18) % 1.4
+    const lift = phase < 0.5 ? Math.sin(phase * Math.PI * 2) * 14 : 0
+    ctx.beginPath()
+    ctx.arc(W / 2 - 40 + i * 40, 860 - lift, 9, 0, Math.PI * 2)
+    ctx.fillStyle = i === 0 ? ORANGE : i === 1 ? RED : WHITE
+    ctx.fill()
+  }
+
+  ctx.restore()
+  return null  // full-screen takeover — no sheen sweep
+}
+
+/**
+ * "Stand By" — pre-show hold card. Slightly less dramatic typographic weight
+ * than BRB, with a live wall-clock readout so the operator can see at a
+ * glance how long the audience has been waiting.
+ */
+function standBy(ctx: CanvasRenderingContext2D): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'right' })
+
+  const W = 1920, H = 1080
+  logoCentred(ctx, 360, 100)
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+
+  // "STAND BY" — extended letter spacing for that broadcast slate feel.
+  ctx.fillStyle = WHITE
+  ctx.font = '800 188px Poppins, sans-serif'
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.45)'
+  ctx.shadowBlur = 40
+  // Hand-track the letter spacing by drawing each char with a measured gap.
+  const text = 'STAND BY'
+  const gap = 16
+  const totalW = ctx.measureText(text).width + gap * (text.length - 1)
+  let x = W / 2 - totalW / 2
+  for (const ch of text) {
+    const w = ctx.measureText(ch).width
+    ctx.fillText(ch, x + w / 2, 640)
+    x += w + gap
+  }
+  ctx.restore()
+
+  // Centre live clock — pulses subtly with the breathing multiplier.
+  const now = new Date()
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 64px Poppins, sans-serif'
+  ctx.fillText(`${hh}:${mm}:${ss}`, W / 2, 760)
+
+  // Subtitle
+  ctx.fillStyle = '#c0c4d4'
+  ctx.font = '500 32px Poppins, sans-serif'
+  ctx.fillText('Live in moments', W / 2, 822)
+
+  // Bottom row of subtle dashes — broadcast-leader style, animated drift.
+  const drift = (Date.now() / 60) % 40
+  ctx.save()
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'
+  for (let i = -2; i < 50; i++) {
+    const dx = i * 40 + drift
+    ctx.fillRect(W / 2 - 600 + dx, 920, 22, 4)
+  }
+  ctx.restore()
+
+  return null
+}
+
+/**
+ * "Coming Up" — preview card pulled from the schedule data. Left-aligned
+ * editorial layout so the show name has room to breathe.
+ */
+function comingUp(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'left' })
+
+  const W = 1920
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+
+  // Logo top-left rather than centred — gives the show name the headline real estate.
+  if (narLogo.complete && narLogo.naturalWidth > 0) {
+    const lh = 72
+    const lw = Math.round(lh * narLogo.naturalWidth / narLogo.naturalHeight)
+    ctx.drawImage(narLogo, 140, 140, lw, lh)
+  }
+
+  // Eyebrow — small label above the headline.
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 30px Poppins, sans-serif'
+  // Manual letter-spacing for the broadcast eyebrow vibe.
+  const eyebrow = 'COMING UP NEXT'
+  let ex = 140
+  const eyeGap = 8
+  for (const ch of eyebrow) {
+    ctx.fillText(ch, ex, 380)
+    ex += ctx.measureText(ch).width + eyeGap
+  }
+
+  // Vertical accent stripe to the left of the show name.
+  const stripeY = 410
+  const stripeH = 320
+  ctx.fillStyle = accent(ctx, stripeY, stripeY + stripeH)
+  ctx.fillRect(140, stripeY, 8, stripeH)
+
+  // Show name — big, white, may wrap. Auto-shrink to fit.
+  const showName = (d.nextName || 'NOW AYRSHIRE RADIO').toUpperCase()
+  ctx.fillStyle = WHITE
+  let fontSize = 156
+  ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  while (ctx.measureText(showName).width > W - 320 && fontSize > 64) {
+    fontSize -= 8
+    ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  }
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.4)'
+  ctx.shadowBlur = 38
+  ctx.fillText(showName, 180, 520)
+  ctx.restore()
+
+  // Time tag — large numeral pinned right.
+  if (d.nextTime) {
+    ctx.textAlign = 'right'
+    ctx.fillStyle = '#d8d8e8'
+    ctx.font = '600 84px Poppins, sans-serif'
+    ctx.fillText(d.nextTime, W - 140, 660)
+  }
+
+  // Presenter or subtitle on the next line — borrows the presenter field.
+  if (d.presenter) {
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#9095b0'
+    ctx.font = '500 36px Poppins, sans-serif'
+    ctx.fillText(d.presenter, 180, 660)
+  }
+
+  // Bottom-right footer
+  ctx.textAlign = 'right'
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.font = '500 22px Poppins, sans-serif'
+  ctx.fillText('nowayrshireradio.co.uk', W - 140, 940)
+
+  return null
+}
+
+/**
+ * "Technical Difficulty" — the apologetic card. Calmer palette (more navy,
+ * less orange), smaller headline, longer subtitle. Designed to read as
+ * "we know, we're on it" rather than "panic".
+ */
+function technicalDifficulty(ctx: CanvasRenderingContext2D): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'left' })
+
+  const W = 1920
+  logoCentred(ctx, 372, 84)
+
+  // Centred warning glyph — a soft triangle outline with an exclamation. SDF
+  // would be cleaner but we're in canvas-2d; geometry primitives are fine.
+  ctx.save()
+  ctx.translate(W / 2, 560)
+  const tri = 110
+  ctx.lineWidth = 8
+  ctx.strokeStyle = ORANGE
+  ctx.beginPath()
+  ctx.moveTo(0, -tri)
+  ctx.lineTo(tri, tri * 0.86)
+  ctx.lineTo(-tri, tri * 0.86)
+  ctx.closePath()
+  ctx.stroke()
+  ctx.fillStyle = WHITE
+  ctx.font = '900 100px Poppins, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('!', 0, 22)
+  ctx.restore()
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = WHITE
+  ctx.font = '800 96px Poppins, sans-serif'
+  ctx.fillText('TECHNICAL DIFFICULTY', W / 2, 790)
+
+  ctx.fillStyle = '#c0c4d4'
+  ctx.font = '500 34px Poppins, sans-serif'
+  ctx.fillText('Apologies — we are working to restore the broadcast', W / 2, 850)
+
+  ctx.fillStyle = '#6e7390'
+  ctx.font = '500 26px Poppins, sans-serif'
+  ctx.fillText('Thank you for your patience', W / 2, 904)
+
+  return null
+}
+
+/**
+ * "Now On Air" — show-open card. High-energy: big animated red NOW badge in
+ * the corner, large show name centred. Designed to be flashed for ~3 seconds
+ * at the top of a show then cut to cameras.
+ */
+function nowOnAir(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'right' })
+
+  const W = 1920
+  const t = Date.now() / 1000
+
+  // Big pulsing NOW dot top-left so the operator + audience clock the on-air state.
+  ctx.save()
+  const pulse = 0.5 + 0.5 * Math.sin(t * 4)
+  const ringR = 60 + pulse * 20
+  ctx.strokeStyle = `rgba(229,32,43,${(1 - pulse) * 0.7})`
+  ctx.lineWidth = 6
+  ctx.beginPath()
+  ctx.arc(180, 200, ringR, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.fillStyle = RED
+  ctx.beginPath()
+  ctx.arc(180, 200, 56, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = WHITE
+  ctx.font = '800 30px Poppins, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('ON AIR', 180, 200)
+  ctx.restore()
+
+  // Logo centred above headline.
+  logoCentred(ctx, 360, 92)
+
+  // Eyebrow
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 32px Poppins, sans-serif'
+  const eyebrow = 'NOW LIVE'
+  let ex = W / 2 - ctx.measureText(eyebrow).width / 2 - 6 * (eyebrow.length - 1)
+  for (const ch of eyebrow) {
+    ctx.fillText(ch, ex, 470)
+    ex += ctx.measureText(ch).width + 12
+  }
+
+  // Show name — auto-shrinks to fit.
+  const showName = (d.showName || 'NOW AYRSHIRE RADIO').toUpperCase()
+  ctx.fillStyle = WHITE
+  let fontSize = 168
+  ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  while (ctx.measureText(showName).width > W - 360 && fontSize > 60) {
+    fontSize -= 8
+    ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  }
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.5)'
+  ctx.shadowBlur = 48
+  ctx.fillText(showName, W / 2, 640)
+  ctx.restore()
+
+  // Brand gradient underline
+  const lineY = 686
+  ctx.fillStyle = accent(ctx, lineY - 4, lineY + 4)
+  roundRect(ctx, W / 2 - 220, lineY, 440, 6, 3)
+  ctx.fill()
+
+  // Presenter
+  if (d.presenter) {
+    ctx.fillStyle = '#c0c4d4'
+    ctx.font = '500 40px Poppins, sans-serif'
+    ctx.fillText(`with ${d.presenter}`, W / 2, 770)
+  }
+
+  // Bottom right URL
+  ctx.textAlign = 'right'
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.font = '500 24px Poppins, sans-serif'
+  ctx.fillText('nowayrshireradio.co.uk', W - 110, 1004)
+
+  return null
 }
 
 function lowerThird(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect {

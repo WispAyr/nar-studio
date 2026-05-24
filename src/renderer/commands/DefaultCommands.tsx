@@ -14,6 +14,7 @@ import { useCompliance } from '../compliance/ComplianceProvider'
 import { useOsc } from '../external/OscBridge'
 import { useUnreal } from '../external/UnrealLauncher'
 import { useReplay } from '../replay/ReplayProvider'
+import { useCG, TITLE_TEMPLATES } from '../cg/CGProvider'
 import { resetAllSettings } from '../settings/resetSettings'
 
 const studio = (window as any).studio
@@ -26,6 +27,7 @@ export function DefaultCommands() {
   const osc = useOsc()
   const unreal = useUnreal()
   const replay = useReplay()
+  const cg = useCG()
 
   // We register a batch of commands on mount and unregister all on unmount,
   // so a hot-reload doesn't end up with stale handlers. Each registration's
@@ -216,6 +218,32 @@ export function DefaultCommands() {
       run: () => studio?.popoutCloseAll?.(),
     })
 
+    // ── Brand cards — full-screen NAR takeovers (BRB, Stand By, …) ────────
+    for (const t of TITLE_TEMPLATES.filter(x => x.group === 'takeover')) {
+      const tpl = t.template
+      add({
+        id: `cg.card.${tpl}`,
+        label: `Card · ${t.label}`,
+        hint: 'Full-screen NAR-branded card — fires immediately',
+        group: 'Brand Cards',
+        run: () => cg.toggleTitle(tpl),
+      })
+    }
+    add({
+      id: 'cg.card.clear-takeovers',
+      label: 'Clear all brand cards',
+      hint: 'Drop every full-screen takeover currently on-air',
+      group: 'Brand Cards',
+      run: () => {
+        for (const layer of cg.layers) {
+          if (layer.kind === 'title' && layer.template) {
+            const tpl = TITLE_TEMPLATES.find(t => t.template === layer.template)
+            if (tpl?.group === 'takeover') cg.toggleTitle(layer.template)
+          }
+        }
+      },
+    })
+
     // ── Settings ───────────────────────────────────────────────────────────
     add({
       id: 'settings.reset-all',
@@ -240,7 +268,7 @@ export function DefaultCommands() {
     // for `register`, so identity churn is bounded by the toggle states.
   }, [
     register,
-    engine, viz, compliance, osc, unreal, replay,
+    engine, viz, compliance, osc, unreal, replay, cg,
     viz.kaleido, viz.autoCycle,
     osc.status?.enabled, unreal.status?.state, unreal.status?.unrealExe,
     replay.enabled,

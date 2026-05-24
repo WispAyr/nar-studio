@@ -1346,6 +1346,64 @@ vec3 mCountdown(vec2 uv, vec2 tuv) {
   return col;
 }
 
+// ── Mode 34: Brand Backdrop — calm audio-reactive NAR-brand backdrop ─────────
+// Pairs visually with the full-screen brand cards (BRB / Stand By / Coming Up
+// / Tech Diff / On Air) — keep it gentle so the typography on top stays the
+// hero. Slow domain-warped gradient toward navy with a soft orange→red glow
+// off-centre, a faintly drifting NAR logo watermark, and a single ring that
+// breathes with the audio level.
+vec3 mBrandBackdrop(vec2 uv) {
+  // Deep navy base with a vertical lift toward the top.
+  vec3 base = mix(vec3(0.025, 0.030, 0.072),  // brand navy floor
+                  vec3(0.060, 0.070, 0.128),  // navy-hi ceiling
+                  smoothstep(-0.5, 0.6, uv.y));
+
+  // Lazy noise lift — single fbm-ish warp pulled in from the existing
+  // fbm helper so the gradient doesn't read as a flat poster wash. Soft
+  // amplitude (4%) is enough to break up banding under bloom.
+  float n = fbm(uv * 1.2 + vec2(uTime * 0.04, uTime * 0.025));
+  base += vec3(0.018, 0.014, 0.026) * (n - 0.5) * 2.0;
+
+  // Off-centre brand glow — orange→red, additive, anchored on a slow orbit.
+  vec2 glowC = vec2(cos(uTime * 0.07) * 0.35, sin(uTime * 0.05) * 0.18 - 0.05);
+  float d = length(uv - glowC);
+  vec3 glow = mix(vec3(0.96, 0.55, 0.10), vec3(0.86, 0.12, 0.16), 0.55);
+  base += glow * (0.30 + 0.20 * uLevel) * smoothstep(0.95, 0.0, d);
+
+  // Faint second glow, opposite side, brand-red. Adds depth.
+  vec2 glow2C = vec2(-glowC.x * 0.6, -glowC.y * 0.4);
+  base += vec3(0.55, 0.08, 0.10) * 0.12 * smoothstep(0.75, 0.0, length(uv - glow2C));
+
+  // Audio-breathing ring — single thin highlight that pulses with level.
+  // Stays subtle because the brand cards on top need contrast.
+  float ringR = 0.42 + 0.04 * uLevel + 0.012 * sin(uTime * 0.6);
+  float ring = exp(-pow((length(uv) - ringR) * 24.0, 2.0));
+  base += vec3(0.95, 0.62, 0.18) * ring * (0.22 + 0.18 * uLevel);
+
+  // Beat tick — very brief flash on each detected beat, never overwhelming.
+  base += vec3(1.0, 0.85, 0.55) * smoothstep(0.0, 1.0, uBeat) * 0.08;
+
+  // Centred NAR wordmark watermark, ~70% width, very low contrast so the
+  // brand cards' typography stays the focus. Sampled from uLogo so it
+  // tracks the actual logo we ship.
+  vec2 tuv = uv * 0.5 + 0.5;
+  float logoH = 0.18;
+  float logoW = logoH * 3.74 * (uRes.y / uRes.x);
+  float lx0 = 0.5 - logoW * 0.5;
+  float ly0 = 0.5 - logoH * 0.5;
+  if (tuv.x > lx0 && tuv.x < lx0 + logoW && tuv.y > ly0 && tuv.y < ly0 + logoH) {
+    vec2 lu = vec2((tuv.x - lx0) / logoW, 1.0 - (tuv.y - ly0) / logoH);
+    vec4 lt = texture(uLogo, lu);
+    // 18% opacity watermark; lifts a touch on beats so it feels alive.
+    base = mix(base, lt.rgb, lt.a * (0.16 + 0.08 * uBeat));
+  }
+
+  // Soft vignette so the edges fall away rather than competing.
+  base *= 1.0 - 0.45 * dot(uv, uv);
+
+  return base;
+}
+
 // ── Mode 32: Slate — SMPTE 75% bars + station ident + clock ──────────────────
 // Cut here pre-broadcast for monitor alignment + a clean station holding card.
 vec3 mSlate(vec2 uv, vec2 tuv) {
@@ -1444,6 +1502,7 @@ void main() {
   else if (uMode == 31) fresh = mPaceDisplay(uv, tuv);
   else if (uMode == 32) fresh = mSlate(uv, tuv);
   else if (uMode == 33) fresh = mCountdown(uv, tuv);
+  else if (uMode == 34) fresh = mBrandBackdrop(uv);
   else fresh = mNebula(uv);
 
   // Per-mode frame feedback — light trails for the flow modes, heavy
