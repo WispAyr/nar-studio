@@ -11,6 +11,8 @@ interface Props {
   elements: MutableRefObject<ElementMap>
   nowPlaying: { track: string; artist: string }
   captionText: string
+  sponsorName?: string
+  sponsorTagline?: string
 }
 
 function fmtTime(iso: string): string {
@@ -26,7 +28,7 @@ function fmtTime(iso: string): string {
  * compositor draws over the program. The static title is cached in a base
  * canvas; a per-frame loop composites it with a subtle audio-reactive sheen.
  */
-export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) {
+export function TitleLayer({ layer, elements, nowPlaying, captionText, sponsorName, sponsorTagline }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const baseRef = useRef<HTMLCanvasElement | null>(null)
   if (!baseRef.current) {
@@ -70,6 +72,8 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) 
       track: nowPlaying.track,
       artist: nowPlaying.artist,
       captionText,
+      sponsorName,
+      sponsorTagline,
     }
     const render = () => { rectRef.current = drawTitle(base, layer.template!, data) }
     render()
@@ -77,7 +81,7 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) 
     document.fonts?.ready.then(render).catch(() => {})
     // The embedded NAR logo decodes asynchronously — redraw when it's ready.
     cgAssetsReady.then(render).catch(() => {})
-  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now, nowPlaying.track, nowPlaying.artist, captionText])
+  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline])
 
   // Per-frame: composite the cached title + a subtle audio-reactive sheen.
   // For animated full-screen takeover cards (BRB pulse, ON AIR ring, dashes)
@@ -109,6 +113,8 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) 
           track: nowPlaying.track,
           artist: nowPlaying.artist,
           captionText,
+          sponsorName,
+          sponsorTagline,
         }
         rectRef.current = drawTitle(base, layer.template, data)
       }
@@ -123,7 +129,7 @@ export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) 
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [layer.template, schedule, nowPlaying.track, nowPlaying.artist, captionText])
+  }, [layer.template, schedule, nowPlaying.track, nowPlaying.artist, captionText, sponsorName, sponsorTagline])
 
   return <canvas ref={canvasRef} width={1920} height={1080} />
 }

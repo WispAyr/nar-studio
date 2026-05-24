@@ -131,6 +131,25 @@ export function CGPanel() {
         </div>
       </div>
 
+      {/* Sponsor text — drives the Sponsor takeover card */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">Sponsor · text</span>
+        <input
+          type="text"
+          placeholder="Sponsor name (e.g. AYR FARM SHOP)"
+          value={cg.sponsorName}
+          onChange={e => cg.setSponsor(e.target.value, cg.sponsorTagline)}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-blue/60"
+        />
+        <input
+          type="text"
+          placeholder="Tagline (optional, e.g. Local. Fresh. Every day.)"
+          value={cg.sponsorTagline}
+          onChange={e => cg.setSponsor(cg.sponsorName, e.target.value)}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-blue/60"
+        />
+      </div>
+
       {/* Now Playing inputs — drive the Now Playing title template */}
       <div className="flex flex-col gap-1">
         <span className="text-xs text-slate-600 uppercase tracking-wider">Now Playing · text</span>

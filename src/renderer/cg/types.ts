@@ -14,6 +14,8 @@ export type TitleTemplate =
   | 'coming-up'
   | 'technical-difficulty'
   | 'now-on-air'
+  | 'music-sweeper'
+  | 'sponsor'
 
 export interface CgAsset {
   category: string

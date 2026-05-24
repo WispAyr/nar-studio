@@ -11,6 +11,10 @@ export interface TitleData {
   track: string
   artist: string
   captionText: string
+  /** Operator-controlled sponsor name (e.g. "Brought to you by …"). */
+  sponsorName?: string
+  /** Optional sponsor strapline shown below the name. */
+  sponsorTagline?: string
 }
 
 /** Bounding box of a rendered title bar — used to clip the reactive sheen. */
@@ -80,10 +84,107 @@ export const ANIMATED_TEMPLATES: ReadonlySet<TitleTemplate> = new Set<TitleTempl
   'be-right-back',
   'stand-by',
   'now-on-air',
+  'music-sweeper',
 ])
 
 export function isAnimatedTemplate(t: TitleTemplate | undefined): boolean {
   return !!t && ANIMATED_TEMPLATES.has(t)
+}
+
+/**
+ * Full-screen takeover templates — the compositor draws these edge-to-edge
+ * with the cinematic transitions defined in `takeoverTransition` below
+ * instead of the standard lower-third slide-and-fade.
+ */
+export const TAKEOVER_TEMPLATES: ReadonlySet<TitleTemplate> = new Set<TitleTemplate>([
+  'be-right-back',
+  'stand-by',
+  'coming-up',
+  'technical-difficulty',
+  'now-on-air',
+  'music-sweeper',
+  'sponsor',
+])
+
+export function isTakeoverTemplate(t: TitleTemplate | undefined): boolean {
+  return !!t && TAKEOVER_TEMPLATES.has(t)
+}
+
+/**
+ * Per-frame transform spec applied by the compositor to a takeover layer.
+ * Lets each card enter and leave with its own personality — a quick flash
+ * for the show open, a slow zoom for Be Right Back, an editorial slide for
+ * Coming Up — without hard-cutting on every fire.
+ */
+export interface TakeoverTransition {
+  /** Overall opacity (alpha) of the card on the program canvas, 0..1. */
+  alpha: number
+  /** Uniform scale around the canvas centre. 1.0 = native size. */
+  scale: number
+  /** Horizontal translate in pixels (program coords). */
+  dx: number
+  /** Vertical translate in pixels. */
+  dy: number
+  /** White-flash overlay alpha drawn on top of the card, 0..1. */
+  flash: number
+}
+
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
+const easeInQuad = (t: number) => t * t
+const easeOutBack = (t: number) => {
+  // Slight overshoot — gives a tactile pop on the entrance.
+  const c1 = 1.70158, c3 = c1 + 1
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+}
+
+/**
+ * Build the per-frame transform for a takeover card. pIn ramps 0→1 while
+ * the card is entering; pOut ramps 0→1 while it's leaving. The compositor
+ * pipes both progress values in; this function decides what they look like.
+ */
+export function takeoverTransition(
+  template: TitleTemplate,
+  pIn: number,
+  pOut: number,
+): TakeoverTransition {
+  // Default: smooth scale-up + fade in, fade + small scale-down out.
+  let scale = 1, dx = 0, dy = 0, flash = 0
+  const eIn = easeOutCubic(pIn)
+  const eOut = easeInQuad(pOut)
+  let alpha = eIn * (1 - eOut)
+
+  if (template === 'be-right-back') {
+    // Slow theatrical zoom in from 92%, hold, drift out to 104% as we leave —
+    // gives the audience time to register the card before any motion.
+    scale = (0.92 + 0.08 * easeOutCubic(pIn)) * (1 + 0.04 * eOut)
+  } else if (template === 'stand-by') {
+    // Soft fade-from-white flash on entry; calm fade out.
+    flash = (1 - eIn) * 0.85
+    scale = 0.985 + 0.015 * easeOutBack(pIn)
+  } else if (template === 'coming-up') {
+    // Editorial slide-in from the right, slide-out to the left.
+    dx = (1 - eIn) * 240 - eOut * 280
+    scale = 0.97 + 0.03 * eIn
+  } else if (template === 'technical-difficulty') {
+    // No theatrics — calm fade. Apology cards shouldn't feel dramatic.
+    scale = 1
+    alpha = eIn * (1 - eOut)
+  } else if (template === 'now-on-air') {
+    // Hard punch in — quick flash + brief overshoot scale-up. Exits softly.
+    flash = Math.max(0, 1 - eIn * 1.6) * 0.7
+    scale = 0.94 + 0.06 * easeOutBack(pIn)
+    if (pOut > 0) scale *= 1 + 0.02 * eOut
+  } else if (template === 'music-sweeper') {
+    // Slide up + fade. Doesn't need much — it's a quick interstitial.
+    dy = (1 - eIn) * 80 - eOut * 60
+    scale = 0.98 + 0.02 * eIn
+  } else if (template === 'sponsor') {
+    // Slide in from the bottom, exit upward — keeps the sponsor name moving.
+    dy = (1 - eIn) * 140 - eOut * 120
+    scale = 0.98 + 0.02 * eIn
+  }
+
+  return { alpha, scale, dx, dy, flash }
 }
 
 /** Render a NAR-branded title onto a 1920×1080 transparent canvas. */
@@ -102,6 +203,8 @@ export function drawTitle(
   if (template === 'coming-up') return comingUp(ctx, data)
   if (template === 'technical-difficulty') return technicalDifficulty(ctx)
   if (template === 'now-on-air') return nowOnAir(ctx, data)
+  if (template === 'music-sweeper') return musicSweeper(ctx, data)
+  if (template === 'sponsor') return sponsorCard(ctx, data)
   return clock(ctx, data)
 }
 
@@ -816,4 +919,151 @@ export function drawSparkle(
   }
 
   ctx.restore()
+}
+
+/**
+ * "Music Sweeper" — short interstitial between tracks. Shows the track,
+ * artist and a centred NAR logo. Designed to be fired for 3-5 seconds via
+ * the compositor's transition then dropped.
+ */
+function musicSweeper(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'right' })
+
+  const W = 1920
+  const track = (d.track || '—').toUpperCase()
+  const artist = d.artist || ''
+
+  // Animated equaliser bars — five vertical bars beating slightly off-phase
+  // so the eye can't lock onto a single frequency. Brand orange→red.
+  const t = Date.now() / 1000
+  const barX = 140
+  const barY = 240
+  for (let i = 0; i < 5; i++) {
+    const h = 40 + Math.abs(Math.sin(t * (1.4 + i * 0.3) + i * 0.7)) * 70
+    const g = ctx.createLinearGradient(0, barY + 110 - h, 0, barY + 110)
+    g.addColorStop(0, ORANGE)
+    g.addColorStop(1, RED)
+    ctx.fillStyle = g
+    roundRect(ctx, barX + i * 20, barY + 110 - h, 12, h, 6)
+    ctx.fill()
+  }
+
+  // Eyebrow
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 28px Poppins, sans-serif'
+  let ex = 280
+  for (const ch of 'NOW PLAYING') {
+    ctx.fillText(ch, ex, 320)
+    ex += ctx.measureText(ch).width + 8
+  }
+
+  // Track name — auto-shrinks to fit.
+  ctx.fillStyle = WHITE
+  let fontSize = 132
+  ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  while (ctx.measureText(track).width > W - 480 && fontSize > 60) {
+    fontSize -= 6
+    ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  }
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.45)'
+  ctx.shadowBlur = 30
+  ctx.fillText(track, 280, 460)
+  ctx.restore()
+
+  // Artist — orange below.
+  if (artist) {
+    ctx.fillStyle = '#d8d8e8'
+    ctx.font = '500 44px Poppins, sans-serif'
+    ctx.fillText(artist, 280, 540)
+  }
+
+  // Brand gradient stripe under the metadata.
+  ctx.fillStyle = accent(ctx, 600, 612)
+  roundRect(ctx, 280, 600, 480, 6, 3)
+  ctx.fill()
+
+  // Right-aligned NAR logo at full visibility — anchors the brand.
+  if (narLogo.complete && narLogo.naturalWidth > 0) {
+    const lh = 84
+    const lw = Math.round(lh * narLogo.naturalWidth / narLogo.naturalHeight)
+    ctx.drawImage(narLogo, W - lw - 140, 900, lw, lh)
+  }
+
+  return null
+}
+
+/**
+ * Sponsor card — operator types the sponsor's name (or it comes from the
+ * schedule data feed). Big editorial layout, optional tagline, "BROUGHT
+ * TO YOU BY" eyebrow that's the visual giveaway this is an ad credit not
+ * a station ident.
+ */
+function sponsorCard(ctx: CanvasRenderingContext2D, d: TitleData): TitleRect | null {
+  brandBackdrop(ctx, { glowAt: 'left' })
+
+  const W = 1920
+  const sponsor = (d.sponsorName || 'YOUR SPONSOR HERE').toUpperCase()
+  const tagline = d.sponsorTagline || ''
+
+  // Small NAR logo top-right so the brand is present without competing.
+  if (narLogo.complete && narLogo.naturalWidth > 0) {
+    const lh = 56
+    const lw = Math.round(lh * narLogo.naturalWidth / narLogo.naturalHeight)
+    ctx.drawImage(narLogo, W - lw - 140, 130, lw, lh)
+  }
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+
+  // Eyebrow — small, orange, letter-spaced.
+  ctx.fillStyle = ORANGE
+  ctx.font = '700 30px Poppins, sans-serif'
+  const eyebrow = 'BROUGHT TO YOU BY'
+  const eyeChars = [...eyebrow]
+  const gap = 10
+  // Measure to centre manually.
+  const eyeW = eyeChars.reduce((s, c) => s + ctx.measureText(c).width + gap, -gap)
+  let ex = W / 2 - eyeW / 2
+  for (const ch of eyeChars) {
+    const w = ctx.measureText(ch).width
+    ctx.fillText(ch, ex + w / 2 - w / 2, 380)
+    ex += w + gap
+  }
+
+  // Sponsor name — large, auto-shrink.
+  ctx.fillStyle = WHITE
+  let fontSize = 168
+  ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  while (ctx.measureText(sponsor).width > W - 240 && fontSize > 60) {
+    fontSize -= 6
+    ctx.font = `900 ${fontSize}px Poppins, sans-serif`
+  }
+  ctx.save()
+  ctx.shadowColor = 'rgba(247,147,30,0.5)'
+  ctx.shadowBlur = 42
+  ctx.fillText(sponsor, W / 2, 560)
+  ctx.restore()
+
+  // Tagline if present.
+  if (tagline) {
+    ctx.fillStyle = '#c0c4d4'
+    ctx.font = '500 38px Poppins, sans-serif'
+    ctx.fillText(tagline, W / 2, 650)
+  }
+
+  // Brand gradient underline.
+  const lineY = tagline ? 700 : 620
+  ctx.fillStyle = accent(ctx, lineY - 4, lineY + 4)
+  roundRect(ctx, W / 2 - 240, lineY, 480, 6, 3)
+  ctx.fill()
+
+  // Small ad-credit footer
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.font = '500 22px Poppins, sans-serif'
+  ctx.fillText('Now Ayrshire Radio · sponsor message', W / 2, 980)
+
+  return null
 }

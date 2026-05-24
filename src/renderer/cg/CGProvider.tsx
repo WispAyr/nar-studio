@@ -24,6 +24,8 @@ export const TITLE_TEMPLATES: { template: TitleTemplate; label: string; group?: 
   { template: 'coming-up', label: 'Coming Up', group: 'takeover' },
   { template: 'technical-difficulty', label: 'Technical Difficulty', group: 'takeover' },
   { template: 'now-on-air', label: 'Now On Air', group: 'takeover' },
+  { template: 'music-sweeper', label: 'Music Sweeper', group: 'takeover' },
+  { template: 'sponsor', label: 'Sponsor', group: 'takeover' },
 ]
 
 interface NowPlaying { track: string; artist: string }
@@ -54,6 +56,11 @@ interface CGContextValue {
   captionsOn: boolean
   setCaptionsOn: (on: boolean) => void
   captionsSupported: boolean
+  /** Sponsor name shown on the Sponsor takeover card. */
+  sponsorName: string
+  /** Optional sponsor strapline shown below the name. */
+  sponsorTagline: string
+  setSponsor: (name: string, tagline?: string) => void
 }
 
 const Ctx = createContext<CGContextValue | null>(null)
@@ -141,6 +148,19 @@ export function CGProvider({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer)
     }
   }, [nowPlayingUrl])
+
+  // Sponsor name + tagline, persisted between launches so a Friday-night
+  // operator doesn't have to retype the night's sponsor.
+  const [sponsorName, setSponsorNameState] = useState(() => localStorage.getItem('nar-sponsor-name') || '')
+  const [sponsorTagline, setSponsorTaglineState] = useState(() => localStorage.getItem('nar-sponsor-tagline') || '')
+  const setSponsor = useCallback((name: string, tagline?: string) => {
+    setSponsorNameState(name)
+    try { localStorage.setItem('nar-sponsor-name', name) } catch { /* ignore */ }
+    if (typeof tagline === 'string') {
+      setSponsorTaglineState(tagline)
+      try { localStorage.setItem('nar-sponsor-tagline', tagline) } catch { /* ignore */ }
+    }
+  }, [])
 
   // Live captions via Web Speech Recognition (Chromium-only). Persists so the
   // operator doesn't have to re-enable after every restart.
@@ -290,12 +310,13 @@ export function CGProvider({ children }: { children: ReactNode }) {
       assets, layers, elements, toggleLayer, toggleTitle, removeLayer, setOpacity, setBlend, raiseLayer, openFolder,
       nowPlaying, setNowPlaying, nowPlayingUrl, setNowPlayingUrl,
       captionText, captionsOn, setCaptionsOn, captionsSupported: SPEECH_AVAILABLE,
+      sponsorName, sponsorTagline, setSponsor,
     }}>
       {/* Off-screen layer elements — decoded/rendered here, drawn onto the program canvas. */}
       <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none' }} aria-hidden>
         {layers.map(layer => {
           if (layer.kind === 'title') {
-            return <TitleLayer key={layer.id} layer={layer} elements={elements} nowPlaying={nowPlaying} captionText={captionText} />
+            return <TitleLayer key={layer.id} layer={layer} elements={elements} nowPlaying={nowPlaying} captionText={captionText} sponsorName={sponsorName} sponsorTagline={sponsorTagline} />
           }
           if (layer.kind === 'video') {
             return (

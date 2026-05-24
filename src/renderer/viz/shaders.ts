@@ -1404,6 +1404,113 @@ vec3 mBrandBackdrop(vec2 uv) {
   return base;
 }
 
+// ── Mode 35: Logo Slam — dramatic NAR ident stinger ──────────────────────────
+// Fire as a 3s sting between segments. Beat-locked when bpmLocked is true so
+// the slam lands on the beat; otherwise free-running on uTime. Sequence:
+//   0.0-0.5s  black with a bright streak charging in from the left
+//   0.5-0.7s  white flash + logo punches in oversized with chromatic split
+//   0.7-1.3s  logo settles to centre with a sparkle drift
+//   1.3-3.0s  hold, then exit dissolve toward navy
+vec3 mLogoSlam(vec2 uv) {
+  // Free-running 3s loop. Operator usually only fires it once and cuts away
+  // when the beat lands, so the loop never visibly resets in practice.
+  float cycle = mod(uTime, 3.0);
+  vec2 tuv = uv * 0.5 + 0.5;
+
+  // ── Phase 0: charging streak ────────────────────────────────────────────
+  if (cycle < 0.5) {
+    float t = cycle / 0.5;             // 0..1
+    vec3 col = vec3(0.020, 0.025, 0.055);
+    // Bright horizontal streak that races left-to-right.
+    float head = -1.2 + t * 2.6;       // moves from -1.2 to +1.4 in screen x
+    float streakD = abs(uv.x - head);
+    float streakY = abs(uv.y * 4.0);
+    float intensity = exp(-streakD * 14.0) * exp(-streakY);
+    col += vec3(0.98, 0.62, 0.18) * intensity * (0.6 + 0.4 * t);
+    // Faint chromatic split as the streak builds.
+    col.r += exp(-(streakD + 0.02) * 14.0) * 0.4 * intensity;
+    col.b += exp(-(streakD - 0.02) * 14.0) * 0.4 * intensity;
+    // Soft anticipatory background lift.
+    col += vec3(0.10, 0.04, 0.03) * t * t;
+    col *= 1.0 - 0.5 * dot(uv, uv);    // vignette
+    return col;
+  }
+
+  // ── Phase 1: punch in (logo oversize + flash) ───────────────────────────
+  if (cycle < 0.7) {
+    float t = (cycle - 0.5) / 0.2;     // 0..1
+    // White flash decays exponentially.
+    float flash = exp(-t * 6.0);
+    vec3 col = mix(vec3(0.06, 0.08, 0.15), vec3(1.0), flash * 0.85);
+    // Logo zooms from 1.6× to 1.0× — overshoots to land big.
+    float scale = 1.6 - 0.6 * t;
+    float logoH = 0.40 / scale;
+    float logoW = logoH * 3.74 * (uRes.y / uRes.x);
+    float lx0 = 0.5 - logoW * 0.5;
+    float ly0 = 0.5 - logoH * 0.5;
+    // Chromatic aberration during the punch — sample the logo three times
+    // with a small offset that decays from 0.012 to 0.
+    float chroma = 0.012 * (1.0 - t);
+    if (tuv.x > lx0 - 0.05 && tuv.x < lx0 + logoW + 0.05) {
+      vec2 lu = vec2((tuv.x - lx0) / logoW, 1.0 - (tuv.y - ly0) / logoH);
+      if (lu.y > 0.0 && lu.y < 1.0) {
+        vec4 rSample = texture(uLogo, lu + vec2(chroma, 0.0));
+        vec4 gSample = texture(uLogo, lu);
+        vec4 bSample = texture(uLogo, lu - vec2(chroma, 0.0));
+        vec3 logoCol = vec3(rSample.r, gSample.g, bSample.b);
+        float a = max(rSample.a, max(gSample.a, bSample.a));
+        col = mix(col, logoCol, a);
+      }
+    }
+    return col;
+  }
+
+  // ── Phase 2: settle (logo at centre, sparkle drift) ─────────────────────
+  if (cycle < 1.3) {
+    float t = (cycle - 0.7) / 0.6;     // 0..1
+    vec3 col = mix(vec3(0.08, 0.10, 0.18), vec3(0.04, 0.05, 0.10), t);
+    // Soft orange backlight expanding behind the logo.
+    float r = length(uv) - 0.4 * t;
+    col += vec3(0.96, 0.55, 0.12) * exp(-r * r * 8.0) * 0.35;
+    // Logo at native size, fully opaque.
+    float logoH = 0.40;
+    float logoW = logoH * 3.74 * (uRes.y / uRes.x);
+    float lx0 = 0.5 - logoW * 0.5;
+    float ly0 = 0.5 - logoH * 0.5;
+    if (tuv.x > lx0 && tuv.x < lx0 + logoW && tuv.y > ly0 && tuv.y < ly0 + logoH) {
+      vec2 lu = vec2((tuv.x - lx0) / logoW, 1.0 - (tuv.y - ly0) / logoH);
+      vec4 lt = texture(uLogo, lu);
+      col = mix(col, lt.rgb, lt.a);
+    }
+    // Sparkle drift — three motes orbiting the logo.
+    for (int i = 0; i < 3; i++) {
+      float a = uTime * 1.4 + float(i) * 2.094;
+      vec2 mote = vec2(cos(a), sin(a) * 0.5) * 0.45;
+      float d = length(uv - mote);
+      col += vec3(1.0, 0.85, 0.55) * exp(-d * 80.0) * 0.6;
+    }
+    return col;
+  }
+
+  // ── Phase 3: hold + exit dissolve toward navy ───────────────────────────
+  float t = (cycle - 1.3) / 1.7;       // 0..1 across remainder
+  vec3 col = vec3(0.04, 0.05, 0.10);
+  float exitFade = smoothstep(0.5, 1.0, t);  // hold for half, then fade
+  float logoH = 0.40 - 0.05 * exitFade;
+  float logoW = logoH * 3.74 * (uRes.y / uRes.x);
+  float lx0 = 0.5 - logoW * 0.5;
+  float ly0 = 0.5 - logoH * 0.5;
+  if (tuv.x > lx0 && tuv.x < lx0 + logoW && tuv.y > ly0 && tuv.y < ly0 + logoH) {
+    vec2 lu = vec2((tuv.x - lx0) / logoW, 1.0 - (tuv.y - ly0) / logoH);
+    vec4 lt = texture(uLogo, lu);
+    col = mix(col, lt.rgb, lt.a * (1.0 - exitFade));
+  }
+  // Brand-orange residual glow that lingers as the logo fades.
+  col += vec3(0.96, 0.55, 0.12) * exp(-dot(uv, uv) * 6.0) * 0.18 * (1.0 - exitFade);
+  col *= 1.0 - 0.5 * dot(uv, uv);
+  return col;
+}
+
 // ── Mode 32: Slate — SMPTE 75% bars + station ident + clock ──────────────────
 // Cut here pre-broadcast for monitor alignment + a clean station holding card.
 vec3 mSlate(vec2 uv, vec2 tuv) {
@@ -1503,6 +1610,7 @@ void main() {
   else if (uMode == 32) fresh = mSlate(uv, tuv);
   else if (uMode == 33) fresh = mCountdown(uv, tuv);
   else if (uMode == 34) fresh = mBrandBackdrop(uv);
+  else if (uMode == 35) fresh = mLogoSlam(uv);
   else fresh = mNebula(uv);
 
   // Per-mode frame feedback — light trails for the flow modes, heavy

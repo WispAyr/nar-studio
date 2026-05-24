@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCameraStreams } from '../camera/CameraStreamProvider'
 import { useCG } from '../cg/CGProvider'
+import { isTakeoverTemplate, takeoverTransition } from '../cg/titles'
 import { useViz, useVizActive } from '../viz/VizProvider'
 import { useGrade } from '../grade/GradeProvider'
 import { useSegmentation } from '../segmentation/SegmentationProvider'
@@ -472,8 +473,11 @@ export function EngineProvider({ children }: { children: ReactNode }) {
         drawCamInto(slots[0], 0, 0, PROGRAM_W, PROGRAM_H, 'contain')
       }
 
-      // CG overlay layers — composited over the program only (never ISO),
-      // each with a subtle slide-and-fade entrance / exit.
+      // CG overlay layers — composited over the program only (never ISO).
+      // Overlays use a small slide-and-fade; full-screen takeover cards use
+      // their own per-template transition recipe so each card enters and
+      // leaves with intent (BRB zooms, Stand By flashes, Coming Up slides
+      // editorial, On Air punches in).
       const { layers, elements } = cgRef.current
       const cgNow = performance.now()
       for (const layer of layers) {
@@ -484,13 +488,42 @@ export function EngineProvider({ children }: { children: ReactNode }) {
           : el instanceof HTMLImageElement ? (!el.complete || el.naturalWidth === 0)
           : false
         if (notReady) continue
-        const pIn = Math.min(1, (cgNow - layer.addedAt) / LAYER_IN_MS)
-        const eIn = 1 - Math.pow(1 - pIn, 3)               // ease-out cubic
-        let eOut = 0
+        const pInRaw = Math.min(1, (cgNow - layer.addedAt) / LAYER_IN_MS)
+        let pOutRaw = 0
         if (layer.removingAt != null) {
-          const pOut = Math.min(1, (cgNow - layer.removingAt) / LAYER_OUT_MS)
-          eOut = pOut * pOut                                // ease-in quad
+          pOutRaw = Math.min(1, (cgNow - layer.removingAt) / LAYER_OUT_MS)
         }
+
+        const isTakeover = layer.kind === 'title' && isTakeoverTemplate(layer.template)
+        if (isTakeover) {
+          // Pull the per-template transform recipe. Each card defines its
+          // own scale / translate / flash so they don't all enter the same.
+          const t = takeoverTransition(layer.template!, pInRaw, pOutRaw)
+          if (t.alpha <= 0.001) continue
+          ctx.save()
+          ctx.globalAlpha = layer.opacity * t.alpha
+          ctx.globalCompositeOperation = layer.blend
+          // Scale around the canvas centre + apply translate.
+          const cx = PROGRAM_W / 2, cy = PROGRAM_H / 2
+          ctx.translate(cx + t.dx, cy + t.dy)
+          ctx.scale(t.scale, t.scale)
+          ctx.drawImage(el, -PROGRAM_W / 2, -PROGRAM_H / 2, PROGRAM_W, PROGRAM_H)
+          ctx.restore()
+          // Optional white-flash overlay drawn at screen scale so the flash
+          // isn't softened by the card's scale transform.
+          if (t.flash > 0.002) {
+            ctx.save()
+            ctx.globalAlpha = layer.opacity * t.flash
+            ctx.fillStyle = '#ffffff'
+            ctx.fillRect(0, 0, PROGRAM_W, PROGRAM_H)
+            ctx.restore()
+          }
+          continue
+        }
+
+        // Standard overlay transition (lower-thirds, clock, etc).
+        const eIn = 1 - Math.pow(1 - pInRaw, 3)               // ease-out cubic
+        const eOut = pOutRaw * pOutRaw                        // ease-in quad
         const vis = eIn * (1 - eOut)
         if (vis <= 0.001) continue
         const dy = (1 - eIn) * 54 + eOut * 40               // slide up in, down out
