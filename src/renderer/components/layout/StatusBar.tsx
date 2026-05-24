@@ -1,6 +1,27 @@
+import { useEffect, useState } from 'react'
 import { useEngine } from '../../engine/EngineProvider'
 import { useCameraStreams } from '../../camera/CameraStreamProvider'
+import { useViz } from '../../viz/VizProvider'
 import type { EngineId } from '../../engine/types'
+
+function FpsIndicator() {
+  const { levelsRef } = useViz()
+  const [fps, setFps] = useState(60)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const v = levelsRef.current.fps
+      setFps(prev => Math.abs(prev - v) < 1 ? prev : v)
+    }, 500)
+    return () => window.clearInterval(id)
+  }, [levelsRef])
+  const colour = fps < 45 ? 'text-nar-red' : fps < 56 ? 'text-nar-amber' : 'text-slate-400'
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" title="Viz pipeline frame rate">
+      <span className="text-slate-600 uppercase tracking-wider">FPS</span>
+      <span className={`tabular-nums font-bold ${colour}`}>{Math.round(fps)}</span>
+    </div>
+  )
+}
 
 const ENGINES: { id: EngineId; label: string }[] = [
   { id: 'builtin', label: 'Built-in' },
@@ -70,6 +91,7 @@ export function StatusBar() {
       )}
 
       <div className="flex-1" />
+      <FpsIndicator />
       <span className="text-slate-700">NAR Studio Director v1.0</span>
     </div>
   )

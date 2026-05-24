@@ -1,6 +1,55 @@
 import { useState, useEffect } from 'react'
 import { useSchedule } from '../../hooks/useSchedule'
 import { useEngine } from '../../engine/EngineProvider'
+import { useReplay } from '../../replay/ReplayProvider'
+
+function ReplayControls() {
+  const replay = useReplay()
+  const canSave = replay.enabled && replay.bufferSec > 0
+  const sourceLabel = replay.source === 'program'
+    ? 'PGM' : replay.source === 'viz' ? 'VIZ' : '—'
+  return (
+    <div className="flex flex-col gap-1 mt-auto p-2 rounded bg-surface-800 border border-surface-700">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-slate-500 uppercase tracking-wider">Replay</span>
+          {replay.enabled && (
+            <>
+              <span className="text-[10px] font-bold text-nar-amber tracking-wider">{sourceLabel}</span>
+              {replay.hasAudio && <span className="text-[10px] font-bold text-nar-green tracking-wider">·AUD</span>}
+            </>
+          )}
+        </div>
+        <button
+          onClick={() => replay.setEnabled(!replay.enabled)}
+          disabled={!replay.supported}
+          title={replay.supported ? 'Roll a 60s replay buffer (program canvas + studio audio)' : 'Replay not supported in this build'}
+          className={`text-xs px-2 py-0.5 rounded font-bold uppercase tracking-wider transition-colors ${
+            !replay.supported
+              ? 'bg-surface-800 text-slate-700 cursor-not-allowed'
+              : replay.enabled
+              ? 'bg-nar-amber text-white'
+              : 'bg-surface-700 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          {replay.enabled ? `ARMED · ${replay.bufferSec}s` : 'ARM'}
+        </button>
+      </div>
+      <button
+        onClick={replay.saveClip}
+        disabled={!canSave}
+        title="Save the most recent rolling buffer as a .webm clip"
+        className={`text-xs py-1.5 rounded font-bold uppercase tracking-wider transition-colors ${
+          canSave
+            ? 'bg-nar-blue text-white hover:bg-blue-500'
+            : 'bg-surface-700 text-slate-700 cursor-not-allowed'
+        }`}
+      >
+        ◧ Save Last {replay.bufferSec}s Clip
+      </button>
+    </div>
+  )
+}
 
 const studio = (window as any).studio
 
@@ -125,6 +174,7 @@ function BuiltinRecording() {
           </span>
         </div>
       )}
+      <ReplayControls />
     </div>
   )
 }
@@ -217,6 +267,7 @@ function ObsRecording() {
           ))}
         </div>
       )}
+      <ReplayControls />
     </div>
   )
 }

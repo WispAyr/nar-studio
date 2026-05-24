@@ -25,7 +25,16 @@ function pickMime(preferVp8: boolean): string {
  * also records a clean, ungraded file per connected camera — each carrying the
  * desk audio as a sync reference — all into the same session folder.
  */
-export function useBuiltinRecorder(getProgramStream: () => MediaStream | null) {
+export function useBuiltinRecorder(
+  getProgramStream: () => MediaStream | null,
+  /**
+   * Optional getter for the processed broadcast audio. When provided the
+   * recorder uses these tracks instead of opening its own `getUserMedia`,
+   * so the recorded files carry the compressor/limiter/HPF that aired —
+   * not the raw mic. Tracks are never stopped here; the provider owns them.
+   */
+  getBroadcastAudio?: () => MediaStream | null,
+) {
   const { streams: camStreams } = useCameraStreams()
   const camStreamsRef = useRef(camStreams)
   camStreamsRef.current = camStreams
@@ -36,7 +45,7 @@ export function useBuiltinRecorder(getProgramStream: () => MediaStream | null) {
   const [isoCount, setIsoCount] = useState(0)
   const [recordError, setRecordError] = useState<string | null>(null)
   const [recordIso, setRecordIsoState] = useState(() => localStorage.getItem('nar-record-iso') !== 'off')
-  const ref = useRef<{ recorders: MediaRecorder[]; audio: MediaStream | null } | null>(null)
+  const ref = useRef<{ recorders: MediaRecorder[]; audio: MediaStream | null; ownsAudio: boolean } | null>(null)
 
   const setRecordIso = useCallback((on: boolean) => {
     localStorage.setItem('nar-record-iso', on ? 'on' : 'off')
@@ -56,16 +65,22 @@ export function useBuiltinRecorder(getProgramStream: () => MediaStream | null) {
     const programVideo = program?.getVideoTracks()[0]
     if (!programVideo) throw new Error('No program video to record')
 
-    // Studio-desk audio (saved selection, falling back to default) — mixed into
-    // the program and every ISO file so each angle has a sync sound reference.
-    let audio: MediaStream | null = null
-    const savedAudio = localStorage.getItem('nar-audio-device')
-    try {
-      audio = await navigator.mediaDevices.getUserMedia({
-        audio: savedAudio ? { deviceId: { exact: savedAudio } } : true,
-      })
-    } catch {
-      try { audio = await navigator.mediaDevices.getUserMedia({ audio: true }) } catch {}
+    // Studio-desk audio — prefer the processed broadcast bus (compressor +
+    // limiter + HPF applied, same signal that's going on-air), fall back to a
+    // raw device capture only if the bus isn't up yet. Mixed into the program
+    // and every ISO file so each angle has a sync sound reference.
+    let audio: MediaStream | null = getBroadcastAudio?.() ?? null
+    let ownsAudio = false
+    if (!audio) {
+      const savedAudio = localStorage.getItem('nar-audio-device')
+      try {
+        audio = await navigator.mediaDevices.getUserMedia({
+          audio: savedAudio ? { deviceId: { exact: savedAudio } } : true,
+        })
+        ownsAudio = true
+      } catch {
+        try { audio = await navigator.mediaDevices.getUserMedia({ audio: true }); ownsAudio = true } catch {}
+      }
     }
     const audioTracks = audio ? audio.getAudioTracks() : []
 
@@ -102,7 +117,9 @@ export function useBuiltinRecorder(getProgramStream: () => MediaStream | null) {
         await studio.builtinRecStop(id)
         remaining -= 1
         if (remaining === 0) {
-          audio?.getTracks().forEach(t => t.stop())
+          // Only stop tracks we opened ourselves; broadcast-bus tracks belong
+          // to the BroadcastAudioProvider and stay live for the next start.
+          if (ownsAudio) audio?.getTracks().forEach(t => t.stop())
           ref.current = null
           setRecording(false)
           setStartedAt(null)
@@ -112,12 +129,12 @@ export function useBuiltinRecorder(getProgramStream: () => MediaStream | null) {
       recorders.push(recorder)
     }
 
-    ref.current = { recorders, audio }
+    ref.current = { recorders, audio, ownsAudio }
     setRecording(true)
     setStartedAt(Date.now())
     setFilePath(programFile)
     setIsoCount(feeds.length - 1)
-  }, [getProgramStream, recordIso])
+  }, [getProgramStream, getBroadcastAudio, recordIso])
 
   const stop = useCallback(() => {
     ref.current?.recorders.forEach(r => { try { r.stop() } catch { /* already stopped */ } })

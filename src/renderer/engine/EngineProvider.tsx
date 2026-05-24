@@ -6,8 +6,9 @@ import { useGrade } from '../grade/GradeProvider'
 import { useSegmentation } from '../segmentation/SegmentationProvider'
 import { useSceneAnalysis } from '../ai/SceneAnalysisProvider'
 import { useBuiltinRecorder, type RecordingShow } from './useBuiltinRecorder'
-import { useBuiltinStreamer, type StreamStatus } from './useBuiltinStreamer'
+import { useBuiltinStreamer, type StreamStatus, type StreamStats } from './useBuiltinStreamer'
 import { useSchedule } from '../hooks/useSchedule'
+import { useBroadcastAudio } from '../audio/BroadcastAudioProvider'
 import { SLOT_COUNT, VIZ_SLOT, type EngineId, type EngineSource, type TransitionType, type LayoutType } from './types'
 
 const studio = (window as any).studio
@@ -66,6 +67,8 @@ interface EngineContextValue {
   /** Number of ISO camera files in the active recording. */
   isoCount: number
   streamStartedAt: number | null
+  /** Encoder health from FFmpeg's progress lines, null when not streaming. */
+  streamStats: StreamStats | null
   startStream: (rtmpUrl: string, streamKey: string) => Promise<void>
   stopStream: () => void
   /** Play a visualizer pre-roll when a stream starts, before cutting to cameras. */
@@ -616,8 +619,17 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     return programStreamRef.current
   }, [])
 
-  const builtinRec = useBuiltinRecorder(getProgramStream)
-  const builtinStream = useBuiltinStreamer(getProgramStream)
+  // Pull the processed broadcast stream from the audio provider — what the
+  // operator's compressor and limiter actually shape. The streamer prefers
+  // these tracks over a raw device capture so the on-air audio matches what
+  // the AudioPanel meters show.
+  const broadcastAudio = useBroadcastAudio()
+  const broadcastAudioRef = useRef(broadcastAudio.processedStream)
+  broadcastAudioRef.current = broadcastAudio.processedStream
+  const getBroadcastAudio = useCallback(() => broadcastAudioRef.current, [])
+
+  const builtinRec = useBuiltinRecorder(getProgramStream, getBroadcastAudio)
+  const builtinStream = useBuiltinStreamer(getProgramStream, getBroadcastAudio)
 
   // Going live optionally runs a visualizer pre-roll before the program shows
   // the cameras; ending the stream clears any pre-roll in progress.
@@ -810,6 +822,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     setRecordIso: builtinRec.setRecordIso,
     isoCount: engineId === 'builtin' ? builtinRec.isoCount : 0,
     streamStartedAt: engineId === 'builtin' ? builtinStream.startedAt : null,
+    streamStats: engineId === 'builtin' ? builtinStream.stats : null,
     startStream,
     stopStream,
     prerollEnabled,

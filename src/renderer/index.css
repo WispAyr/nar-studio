@@ -47,8 +47,8 @@ html, body, #root {
 
 /* Program border pulse when recording */
 @keyframes rec-pulse {
-  0%, 100% { border-color: #e8003c; }
-  50% { border-color: #ff4466; }
+  0%, 100% { border-color: #e5202b; }
+  50% { border-color: #ff5a47; }
 }
 .recording-border {
   animation: rec-pulse 1.5s ease-in-out infinite;

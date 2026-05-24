@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useEngine } from '../../engine/EngineProvider'
+import { useViz } from '../../viz/VizProvider'
 
 const studio = (window as any).studio
 
@@ -12,6 +13,57 @@ interface StreamProfile {
 }
 
 const PLATFORM_LABELS = { youtube: 'YT', twitch: 'TW', custom: '⚡' }
+
+/** Secondary RTMP destinations the built-in streamer simulcasts to via FFmpeg's
+ *  tee muxer. Each URL must include its own stream key. */
+function SimulcastSection() {
+  const [urls, setUrls] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('nar-stream-simulcast')
+      if (raw) {
+        const arr = JSON.parse(raw)
+        if (Array.isArray(arr)) {
+          const out = arr.filter((s: unknown) => typeof s === 'string') as string[]
+          while (out.length < 3) out.push('')
+          return out.slice(0, 3)
+        }
+      }
+    } catch { /* ignore */ }
+    return ['', '', '']
+  })
+  const update = (i: number, v: string) => {
+    const next = [...urls]
+    next[i] = v
+    setUrls(next)
+    try {
+      localStorage.setItem('nar-stream-simulcast', JSON.stringify(next.filter(s => s.trim())))
+    } catch { /* ignore */ }
+  }
+  const activeCount = urls.filter(s => s.trim()).length
+  return (
+    <div className="flex flex-col gap-1 mt-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">Simulcast · extra RTMPs</span>
+        {activeCount > 0 && (
+          <span className="text-[10px] font-bold text-nar-amber">+{activeCount}</span>
+        )}
+      </div>
+      {urls.map((u, i) => (
+        <input
+          key={i}
+          type="text"
+          placeholder={`Optional RTMP URL ${i + 1} (e.g. rtmp://live.twitch.tv/app/KEY)`}
+          value={u}
+          onChange={e => update(i, e.target.value)}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-[10px] text-slate-200 font-mono outline-none focus:border-nar-blue/60"
+        />
+      ))}
+      <span className="text-[10px] text-slate-600 leading-snug">
+        FFmpeg tees the encode to all destinations; <span className="font-mono">onfail=ignore</span> means one platform dropping won't kill the others. Each URL must include its stream key.
+      </span>
+    </div>
+  )
+}
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const PREROLL_PRESETS = [30, 60, 90, 120]
@@ -209,6 +261,18 @@ export function StreamPanel() {
         </div>
       )}
 
+      {/* Quality preset selector — drives FFmpeg encoder + bitrate */}
+      {engineId === 'builtin' && <QualitySection />}
+
+      {/* Live stream-health readout (encoder fps, bitrate, speed, drops) */}
+      {engineId === 'builtin' && streamStatus !== 'idle' && <StreamHealthRow />}
+
+      {/* Pre-flight readiness checks before going live */}
+      {engineId === 'builtin' && streamStatus === 'idle' && <PreflightSection />}
+
+      {/* Simulcast destinations — built-in engine only, FFmpeg tee */}
+      {engineId === 'builtin' && <SimulcastSection />}
+
       {/* Profile list */}
       <div className="flex flex-col gap-1">
         {profiles.map(p => (
@@ -297,4 +361,202 @@ export function StreamPanel() {
       )}
     </div>
   )
+}
+
+/**
+ * Quality preset chooser. The preset id is persisted to localStorage; the
+ * built-in streamer reads it on every start + reconnect. Hardware (NVENC)
+ * presets sit behind a small "Advanced" toggle because they require a
+ * compatible NVIDIA GPU + driver and silently fail otherwise — we want the
+ * common-case software presets to be the obvious choice.
+ */
+function QualitySection() {
+  const [presets, setPresets] = useState<{ id: string; label: string; encoder: string; bitrateK: number }[]>([])
+  const [selected, setSelected] = useState<string>(() => localStorage.getItem('nar-stream-quality') || 'standard')
+  const [showAdvanced, setShowAdvanced] = useState(() => localStorage.getItem('nar-stream-advanced') === '1')
+
+  useEffect(() => {
+    studio?.builtinStreamPresets?.().then((p: any[]) => setPresets(p || [])).catch(() => setPresets([]))
+  }, [])
+
+  const apply = (id: string) => {
+    localStorage.setItem('nar-stream-quality', id)
+    setSelected(id)
+  }
+
+  const isAdv = (encoder: string) => encoder !== 'libx264'
+  const visible = presets.filter(p => showAdvanced || !isAdv(p.encoder))
+  const current = presets.find(p => p.id === selected)
+
+  return (
+    <div className="flex flex-col gap-1 mt-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">Quality</span>
+        <button
+          onClick={() => {
+            const next = !showAdvanced
+            localStorage.setItem('nar-stream-advanced', next ? '1' : '0')
+            setShowAdvanced(next)
+          }}
+          className="text-[10px] text-slate-600 hover:text-slate-300"
+        >
+          {showAdvanced ? 'Hide hardware' : 'Show hardware'}
+        </button>
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {visible.map(p => (
+          <button
+            key={p.id}
+            onClick={() => apply(p.id)}
+            className={`text-[10px] py-1 rounded font-bold uppercase tracking-wider transition-colors ${
+              selected === p.id
+                ? 'bg-nar-blue text-white'
+                : 'bg-surface-800 text-slate-500 hover:text-slate-300'
+            }`}
+            title={`${p.encoder} · ${p.bitrateK} kbps`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {current && (
+        <span className="text-[10px] text-slate-600 leading-snug">
+          {current.encoder === 'h264_nvenc' ? 'GPU (NVENC)' : 'CPU (libx264)'} · {current.bitrateK} kbps · BT.709 colour
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Live stream-health readout — sourced from FFmpeg's progress lines. Speed
+ * is the most important number: anything under ~0.98× means the encoder is
+ * losing ground to the source and YouTube will eventually drop us.
+ */
+function StreamHealthRow() {
+  const { streamStats: stats } = useEngine()
+  if (!stats) return null
+  const speedOk = stats.speed >= 0.98
+  const speedWarn = stats.speed >= 0.92 && !speedOk
+  const speedColor = speedOk ? 'text-nar-green' : speedWarn ? 'text-nar-amber' : 'text-nar-red'
+  const fpsOk = stats.fps >= 29.0
+  return (
+    <div className="flex items-center gap-3 text-[10px] font-mono tabular-nums text-slate-500 mt-1 px-1">
+      <span>
+        <span className="text-slate-700 mr-1">fps</span>
+        <span className={fpsOk ? 'text-slate-300' : 'text-nar-amber'}>{stats.fps.toFixed(0)}</span>
+      </span>
+      <span>
+        <span className="text-slate-700 mr-1">kbps</span>
+        <span className="text-slate-300">{stats.bitrateK.toFixed(0)}</span>
+      </span>
+      <span>
+        <span className="text-slate-700 mr-1">speed</span>
+        <span className={speedColor}>{stats.speed.toFixed(2)}×</span>
+      </span>
+      <span>
+        <span className="text-slate-700 mr-1">q</span>
+        <span className="text-slate-300">{stats.q.toFixed(0)}</span>
+      </span>
+      {stats.drops > 0 && (
+        <span className="text-nar-red">drop {stats.drops}</span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Pre-flight checks before Go Live — surfaces problems early instead of
+ * letting the operator find out during a five-second blank cut.
+ */
+function PreflightSection() {
+  const { engineId } = useEngine()
+  // The useViz hook is the canonical source of GPU FPS for the program canvas.
+  const viz = useVizFps()
+  const [audioOk, setAudioOk] = useState(false)
+  const [hasKey, setHasKey] = useState(false)
+
+  // Quick audio level probe — we read the broadcast bus analyser if available
+  // via a lightweight DOM check; otherwise just confirm a device is picked.
+  useEffect(() => {
+    setHasKey(!!localStorage.getItem('nar-audio-device'))
+    let raf = 0
+    let cancelled = false
+    let probeStream: MediaStream | null = null
+    ;(async () => {
+      try {
+        const id = localStorage.getItem('nar-audio-device') || ''
+        probeStream = await navigator.mediaDevices.getUserMedia({
+          audio: id ? { deviceId: { exact: id } } : true,
+          video: false,
+        })
+        if (cancelled) { probeStream?.getTracks().forEach(t => t.stop()); return }
+        const ac = new AudioContext()
+        const src = ac.createMediaStreamSource(probeStream)
+        const an = ac.createAnalyser(); an.fftSize = 256
+        src.connect(an)
+        const buf = new Float32Array(256)
+        let frames = 0
+        const tick = () => {
+          if (cancelled) return
+          an.getFloatTimeDomainData(buf)
+          let peak = 0
+          for (const v of buf) { const a = Math.abs(v); if (a > peak) peak = a }
+          if (peak > 0.001) setAudioOk(true)
+          frames += 1
+          if (frames < 30) raf = requestAnimationFrame(tick)
+          else {
+            try { ac.close() } catch {}
+            probeStream?.getTracks().forEach(t => t.stop())
+            probeStream = null
+          }
+        }
+        raf = requestAnimationFrame(tick)
+      } catch {
+        setAudioOk(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      probeStream?.getTracks().forEach(t => t.stop())
+    }
+  }, [])
+
+  if (engineId !== 'builtin') return null
+  const fpsOk = viz >= 28
+  const fpsLabel = viz > 0 ? viz.toFixed(0) : '—'
+
+  const Pill = ({ ok, label, value }: { ok: boolean; label: string; value: string }) => (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded ${ok ? 'bg-surface-800' : 'bg-surface-800/60'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-nar-green' : 'bg-nar-amber'}`} />
+      <span className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</span>
+      <span className={`text-[10px] tabular-nums ${ok ? 'text-slate-300' : 'text-nar-amber'}`}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col gap-1 mt-1">
+      <span className="text-xs text-slate-600 uppercase tracking-wider">Pre-flight</span>
+      <div className="grid grid-cols-2 gap-1">
+        <Pill ok={fpsOk} label="GPU" value={`${fpsLabel} fps`} />
+        <Pill ok={audioOk} label="Audio" value={audioOk ? 'OK' : '—'} />
+        <Pill ok={hasKey} label="Device" value={hasKey ? 'set' : 'default'} />
+        <Pill ok={true} label="FFmpeg" value="bundled" />
+      </div>
+    </div>
+  )
+}
+
+function useVizFps() {
+  const { levelsRef } = useViz()
+  const [fps, setFps] = useState(0)
+  useEffect(() => {
+    // Levels ref is updated by the render loop; poll at 2 Hz for the UI.
+    const tick = () => setFps(levelsRef.current.fps || 0)
+    tick()
+    const id = window.setInterval(tick, 500)
+    return () => window.clearInterval(id)
+  }, [levelsRef])
+  return fps
 }

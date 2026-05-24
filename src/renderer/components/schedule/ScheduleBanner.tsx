@@ -1,5 +1,46 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSchedule } from '../../hooks/useSchedule'
+import { useViz } from '../../viz/VizProvider'
+import { NAR_LOGO_DATA_URI } from '../../cg/narLogo'
+
+function PaceIndicator() {
+  const { levelsRef, audioActive } = useViz()
+  const audioActiveRef = useRef(audioActive)
+  audioActiveRef.current = audioActive
+  const [pace, setPace] = useState({ bpm: 0, locked: false, beat: 0 })
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const lv = levelsRef.current
+      const bpm = Math.round(lv.bpm)
+      const locked = lv.bpmConfident && audioActiveRef.current
+      setPace(prev =>
+        prev.bpm === bpm && prev.locked === locked && Math.abs(prev.beat - lv.beat) < 0.05
+          ? prev
+          : { bpm, locked, beat: lv.beat })
+    }, 150)
+    return () => window.clearInterval(id)
+  }, [levelsRef])
+
+  return (
+    <div
+      className="flex items-center gap-1.5 shrink-0"
+      title={pace.locked ? 'Pace locked — tempo-driven triggers active' : 'Listening for a stable tempo…'}
+    >
+      <div
+        className="w-1.5 h-1.5 rounded-full"
+        style={{
+          background: pace.locked ? '#f7931e' : '#2e2e3a',
+          opacity: pace.locked ? 0.45 + 0.55 * pace.beat : 1,
+        }}
+      />
+      <span className={`text-xs tabular-nums font-bold ${pace.locked ? 'text-nar-amber' : 'text-slate-600'}`}>
+        {pace.locked && pace.bpm > 50 ? pace.bpm : '—'}
+      </span>
+      <span className="text-[10px] text-slate-500 tracking-wider">BPM</span>
+    </div>
+  )
+}
 
 function Clock() {
   const [time, setTime] = useState(new Date())
@@ -19,10 +60,9 @@ export function ScheduleBanner() {
 
   return (
     <div className="flex items-center gap-4 px-4 h-10 bg-surface-900 border-b border-surface-700 shrink-0">
-      {/* Logo / branding */}
-      <div className="flex items-center gap-2 shrink-0">
-        <div className="w-2 h-2 rounded-full bg-nar-red" />
-        <span className="text-xs font-bold tracking-widest text-slate-400 uppercase">NAR</span>
+      {/* Station ident */}
+      <div className="flex items-center shrink-0">
+        <img src={NAR_LOGO_DATA_URI} alt="Now Ayrshire Radio" className="h-6 w-auto" />
       </div>
 
       {/* Current show */}
@@ -60,6 +100,8 @@ export function ScheduleBanner() {
       {stale && (
         <span className="text-xs text-nar-amber shrink-0">⚠ stale</span>
       )}
+
+      <PaceIndicator />
 
       <Clock />
     </div>

@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.3",
+	"Category": "",
+	"Description": "NAR Studio companion — receives OSC audio metrics from NAR Studio Director and exposes them to Blueprints / Niagara / Materials. Outputs the level viewport over NDI.",
+	"Modules": [
+		{
+			"Name": "NarVisualizer",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"CoreUObject",
+				"OSC",
+				"Niagara"
+			]
+		}
+	],
+	"Plugins": [
+		{ "Name": "OSC",           "Enabled": true },
+		{ "Name": "Niagara",       "Enabled": true },
+		{ "Name": "EnhancedInput", "Enabled": true },
+		{ "Name": "NDIIO",         "Enabled": true, "MarketplaceURL": "https://ndi.video/tools/" }
+	]
+}

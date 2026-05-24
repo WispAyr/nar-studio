@@ -58,10 +58,41 @@ contextBridge.exposeInMainWorld('studio', {
   onRecError: (cb: (msg: string) => void) => on('rec:error', cb),
 
   // Built-in engine streaming
-  builtinStreamStart: (rtmpUrl: string, streamKey: string) => invoke('builtin-stream:start', { rtmpUrl, streamKey }),
+  builtinStreamStart: (rtmpUrl: string, streamKey: string, additionalUrls?: string[], quality?: string) =>
+    invoke('builtin-stream:start', { rtmpUrl, streamKey, additionalUrls, quality }),
   builtinStreamWrite: (chunk: ArrayBuffer) => invoke('builtin-stream:write', { chunk }),
   builtinStreamStop: () => invoke('builtin-stream:stop'),
+  builtinStreamPresets: () => invoke('builtin-stream:presets'),
   onStreamEnded: (cb: () => void) => on('stream:ended', cb),
+  onStreamStats: (cb: (s: any) => void) => on('stream:stats', cb),
+
+  // Compliance audio logger
+  complianceStatus: () => invoke('compliance:status'),
+  complianceSetEnabled: (enabled: boolean) => invoke('compliance:set-enabled', { enabled }),
+  complianceSetRetention: (days: number) => invoke('compliance:set-retention', { days }),
+  complianceSetSegment: (minutes: number) => invoke('compliance:set-segment', { minutes }),
+  complianceStartSegment: (ext: string) => invoke('compliance:start-segment', { ext }),
+  complianceWrite: (id: string, chunk: ArrayBuffer) => invoke('compliance:write', { id, chunk }),
+  complianceStopSegment: (id: string) => invoke('compliance:stop-segment', { id }),
+  complianceSweep: () => invoke('compliance:sweep'),
+  complianceOpenFolder: () => invoke('compliance:open-folder'),
+
+  // OSC bridge to external visualization engines
+  oscStatus: () => invoke('osc:status'),
+  oscSetEnabled: (enabled: boolean) => invoke('osc:set-enabled', { enabled }),
+  oscSetHost: (host: string) => invoke('osc:set-host', { host }),
+  oscSetPort: (port: number) => invoke('osc:set-port', { port }),
+  oscSendMetrics: (metrics: Record<string, number>) => invoke('osc:metrics', { metrics }),
+  oscSendEvent: (address: string, n?: number) => invoke('osc:event', { address, n: n ?? 1 }),
+
+  // Unreal Engine companion launcher
+  unrealStatus: () => invoke('unreal:status'),
+  unrealStart: () => invoke('unreal:start'),
+  unrealStop: () => invoke('unreal:stop'),
+  unrealConfig: (patch: Record<string, unknown>) => invoke('unreal:config', { patch }),
+  unrealPickExe: () => invoke('unreal:pick-exe'),
+  unrealPickProject: () => invoke('unreal:pick-project'),
+  onUnrealStatus: (cb: (s: any) => void) => on('unreal:status', cb),
 
   // CG asset library
   cgList: () => invoke('cg:list'),

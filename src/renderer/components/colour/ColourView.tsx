@@ -276,7 +276,7 @@ export function ColourView({ onExit }: { onExit: () => void }) {
                 onChange={v => patch({ saturation: v })}
               />
               <GradeSlider
-                label="Temp" accent="#f59e0b" value={grade.temperature}
+                label="Temp" accent="#f7931e" value={grade.temperature}
                 min={-1} max={1} step={0.01} neutral={0}
                 onChange={v => patch({ temperature: v })}
               />

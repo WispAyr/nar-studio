@@ -1,6 +1,6 @@
 export type CgKind = 'image' | 'video' | 'title'
 
-export type TitleTemplate = 'show-lower-third' | 'up-next' | 'clock'
+export type TitleTemplate = 'show-lower-third' | 'up-next' | 'clock' | 'now-playing' | 'captions'
 
 export interface CgAsset {
   category: string

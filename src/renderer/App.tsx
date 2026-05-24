@@ -26,6 +26,12 @@ import { StreamDeckProvider } from './streamdeck/StreamDeckProvider'
 import { StreamDeckView } from './components/streamdeck/StreamDeckView'
 import { StudioView } from './components/studio/StudioView'
 import { EngineProvider } from './engine/EngineProvider'
+import { KeyboardHelp } from './components/help/KeyboardHelp'
+import { ReplayProvider } from './replay/ReplayProvider'
+import { ComplianceProvider } from './compliance/ComplianceProvider'
+import { BroadcastAudioProvider } from './audio/BroadcastAudioProvider'
+import { OscBridgeProvider } from './external/OscBridge'
+import { UnrealLauncherProvider } from './external/UnrealLauncher'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
@@ -35,6 +41,7 @@ export default function App() {
     <CameraStreamProvider>
       <SceneAnalysisProvider>
         <RecognitionProvider>
+          <BroadcastAudioProvider>
           <VizProvider>
             <CGProvider>
               <GradeProvider>
@@ -45,7 +52,16 @@ export default function App() {
                           cameras are live and pause tracking on them. */}
                       <AiTrackingProvider>
                         <StreamDeckProvider>
-                          <Workspace />
+                          <ReplayProvider>
+                            <ComplianceProvider>
+                              <OscBridgeProvider>
+                                <UnrealLauncherProvider>
+                                  <Workspace />
+                                  <KeyboardHelp />
+                                </UnrealLauncherProvider>
+                              </OscBridgeProvider>
+                            </ComplianceProvider>
+                          </ReplayProvider>
                         </StreamDeckProvider>
                       </AiTrackingProvider>
                     </DirectorProvider>
@@ -54,6 +70,7 @@ export default function App() {
               </GradeProvider>
             </CGProvider>
           </VizProvider>
+          </BroadcastAudioProvider>
         </RecognitionProvider>
       </SceneAnalysisProvider>
     </CameraStreamProvider>

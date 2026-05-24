@@ -5,6 +5,25 @@ const studio = (window as any).studio
 /** idle = not streaming · live = healthy · reconnecting / lost = RTMP dropped. */
 export type StreamStatus = 'idle' | 'live' | 'reconnecting' | 'lost'
 
+/** Quality preset id mirrored from the main process. */
+export type StreamQualityPreset =
+  | 'performance' | 'standard' | 'high' | 'maximum' | 'nvenc-high' | 'nvenc-max'
+
+export interface StreamStats {
+  frames: number
+  fps: number
+  bitrateK: number
+  speed: number
+  drops: number
+  q: number
+}
+
+function readQualityPref(): StreamQualityPreset {
+  const v = localStorage.getItem('nar-stream-quality') as StreamQualityPreset | null
+  const allowed: StreamQualityPreset[] = ['performance', 'standard', 'high', 'maximum', 'nvenc-high', 'nvenc-max']
+  return v && allowed.includes(v) ? v : 'standard'
+}
+
 function pickMime(): string {
   const opts = [
     'video/webm;codecs=vp9,opus',
@@ -12,6 +31,18 @@ function pickMime(): string {
     'video/webm',
   ]
   return opts.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
+}
+
+/** Read secondary RTMP destinations the operator entered in the Stream panel. */
+function readSimulcast(): string[] {
+  try {
+    const raw = localStorage.getItem('nar-stream-simulcast')
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr)
+      ? arr.map((s: unknown) => typeof s === 'string' ? s.trim() : '').filter(Boolean)
+      : []
+  } catch { return [] }
 }
 
 interface Session {
@@ -44,11 +75,27 @@ function killRecorder(s: Session) {
  * here with exponential backoff, holding 'reconnecting' until the link proves
  * stable so the operator is never shown a false "LIVE".
  */
-export function useBuiltinStreamer(getProgramStream: () => MediaStream | null) {
+export function useBuiltinStreamer(
+  getProgramStream: () => MediaStream | null,
+  /**
+   * Optional getter for the processed broadcast audio. When provided the
+   * streamer uses these tracks instead of opening its own `getUserMedia`,
+   * so the operator's compressor/limiter/HPF actually reach the FFmpeg
+   * encoder. The hook never stops these tracks — the provider owns them.
+   */
+  getBroadcastAudio?: () => MediaStream | null,
+) {
   const [status, setStatus] = useState<StreamStatus>('idle')
   const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [stats, setStats] = useState<StreamStats | null>(null)
   const sref = useRef<Session | null>(null)
   const reconnectRef = useRef<() => void>(() => {})
+
+  // Stream stats — FFmpeg pushes one event per second while live.
+  useEffect(() => {
+    const off = studio?.onStreamStats?.((s: StreamStats) => setStats(s))
+    return () => off?.()
+  }, [])
 
   // Build + start a MediaRecorder feeding the current FFmpeg. False = no video.
   const spawnRecorder = useCallback((s: Session): boolean => {
@@ -87,7 +134,7 @@ export function useBuiltinStreamer(getProgramStream: () => MediaStream | null) {
     if (!s || s.userStopped) return
     s.reconnectTimer = null
     let res: { ok?: boolean } | null = null
-    try { res = await studio.builtinStreamStart(s.rtmpUrl, s.streamKey) } catch { res = null }
+    try { res = await studio.builtinStreamStart(s.rtmpUrl, s.streamKey, readSimulcast(), readQualityPref()) } catch { res = null }
     const cur = sref.current
     if (!cur || cur.userStopped) { studio.builtinStreamStop?.(); return }
     if (!res?.ok) { scheduleReconnect(); return }
@@ -116,20 +163,28 @@ export function useBuiltinStreamer(getProgramStream: () => MediaStream | null) {
     const videoTrack = getProgramStream()?.getVideoTracks()[0]
     if (!videoTrack) throw new Error('No program video to stream')
 
-    let audio: MediaStream | null = null
-    const savedAudio = localStorage.getItem('nar-audio-device')
-    try {
-      audio = await navigator.mediaDevices.getUserMedia({
-        audio: savedAudio ? { deviceId: { exact: savedAudio } } : true,
-      })
-    } catch {
-      try { audio = await navigator.mediaDevices.getUserMedia({ audio: true }) } catch { /* ignore */ }
+    // Prefer the processed broadcast bus when the caller provides one — that
+    // way the compressor/limiter/HPF reach FFmpeg. Fall back to a raw device
+    // capture only when no bus is available (older callers, tests).
+    let audio: MediaStream | null = getBroadcastAudio?.() ?? null
+    let ownedAudio = false
+    if (!audio) {
+      const savedAudio = localStorage.getItem('nar-audio-device')
+      try {
+        audio = await navigator.mediaDevices.getUserMedia({
+          audio: savedAudio ? { deviceId: { exact: savedAudio } } : true,
+        })
+        ownedAudio = true
+      } catch {
+        try { audio = await navigator.mediaDevices.getUserMedia({ audio: true }); ownedAudio = true }
+        catch { /* ignore */ }
+      }
     }
 
     let res: { ok?: boolean; error?: string } | null = null
-    try { res = await studio.builtinStreamStart(rtmpUrl, streamKey) } catch { res = null }
+    try { res = await studio.builtinStreamStart(rtmpUrl, streamKey, readSimulcast(), readQualityPref()) } catch { res = null }
     if (!res?.ok) {
-      audio?.getTracks().forEach(t => t.stop())
+      if (ownedAudio) audio?.getTracks().forEach(t => t.stop())
       throw new Error(res?.error || 'Failed to start stream')
     }
 
@@ -137,16 +192,18 @@ export function useBuiltinStreamer(getProgramStream: () => MediaStream | null) {
       rtmpUrl, streamKey, audio, recorder: null,
       attempt: 0, reconnectTimer: null, confirmTimer: null, userStopped: false,
     }
+    // Mark whether we own the tracks — only owned tracks get stopped on stop().
+    ;(s as Session & { ownedAudio?: boolean }).ownedAudio = ownedAudio
     sref.current = s
     if (!spawnRecorder(s)) {
       studio.builtinStreamStop()
-      audio?.getTracks().forEach(t => t.stop())
+      if (ownedAudio) audio?.getTracks().forEach(t => t.stop())
       sref.current = null
       throw new Error('No program video to stream')
     }
     setStatus('live')
     setStartedAt(Date.now())
-  }, [getProgramStream, spawnRecorder])
+  }, [getProgramStream, getBroadcastAudio, spawnRecorder])
 
   const stop = useCallback(() => {
     const s = sref.current
@@ -156,11 +213,16 @@ export function useBuiltinStreamer(getProgramStream: () => MediaStream | null) {
     if (s.confirmTimer != null) clearTimeout(s.confirmTimer)
     killRecorder(s)
     studio.builtinStreamStop()
-    s.audio?.getTracks().forEach(t => t.stop())
+    // Only stop tracks we opened ourselves — caller-supplied broadcast tracks
+    // belong to the BroadcastAudioProvider.
+    if ((s as Session & { ownedAudio?: boolean }).ownedAudio) {
+      s.audio?.getTracks().forEach(t => t.stop())
+    }
     sref.current = null
     setStatus('idle')
     setStartedAt(null)
+    setStats(null)
   }, [])
 
-  return { status, streaming: status !== 'idle', startedAt, start, stop }
+  return { status, streaming: status !== 'idle', startedAt, start, stop, stats }
 }

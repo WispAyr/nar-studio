@@ -12,8 +12,8 @@ export default {
           600: '#2e2e3a',
         },
         nar: {
-          red: '#e8003c',
-          amber: '#f59e0b',
+          red: '#e5202b',
+          amber: '#f7931e',
           green: '#22c55e',
           blue: '#3b82f6',
         },

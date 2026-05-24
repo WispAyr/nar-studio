@@ -6,6 +6,10 @@ import { recordingManager } from './recording'
 import { streamManager } from './stream'
 import { builtinRecorder } from './builtinRecorder'
 import { builtinStreamer } from './builtinStreamer'
+import { complianceLogger } from './complianceLogger'
+import { oscBridge } from './osc'
+import { unrealLauncher } from './unrealLauncher'
+import { dialog } from 'electron'
 import { cgAssets } from './cgAssets'
 import { vizShaders } from './vizShaders'
 
@@ -73,9 +77,52 @@ export function registerIpcHandlers(ipc: IpcMain) {
   ipc.handle('builtin-rec:open-folder', () => builtinRecorder.openFolder())
 
   // ── Built-in engine streaming (renderer MediaRecorder → FFmpeg → RTMP) ────
-  ipc.handle('builtin-stream:start', (_e, { rtmpUrl, streamKey }) => builtinStreamer.start(rtmpUrl, streamKey))
+  ipc.handle('builtin-stream:start', (_e, { rtmpUrl, streamKey, additionalUrls, quality }) =>
+    builtinStreamer.start(rtmpUrl, streamKey, additionalUrls ?? [], quality))
   ipc.handle('builtin-stream:write', (_e, { chunk }) => builtinStreamer.write(chunk))
   ipc.handle('builtin-stream:stop', () => builtinStreamer.stop())
+  ipc.handle('builtin-stream:presets', () => builtinStreamer.listPresets())
+
+  // ── Compliance audio logger (continuous as-broadcast capture) ─────────────
+  ipc.handle('compliance:status', () => complianceLogger.getStatus())
+  ipc.handle('compliance:set-enabled', (_e, { enabled }) => complianceLogger.setEnabled(enabled))
+  ipc.handle('compliance:set-retention', (_e, { days }) => complianceLogger.setRetentionDays(days))
+  ipc.handle('compliance:set-segment', (_e, { minutes }) => complianceLogger.setSegmentMinutes(minutes))
+  ipc.handle('compliance:start-segment', (_e, { ext }) => complianceLogger.startSegment(ext))
+  ipc.handle('compliance:write', (_e, { id, chunk }) => complianceLogger.write(id, chunk))
+  ipc.handle('compliance:stop-segment', (_e, { id }) => complianceLogger.stopSegment(id))
+  ipc.handle('compliance:sweep', () => complianceLogger.sweep())
+  ipc.handle('compliance:open-folder', () => complianceLogger.openFolder())
+
+  // ── OSC bridge to external visualization engines (Unreal / TouchDesigner / …)
+  ipc.handle('osc:status', () => oscBridge.getStatus())
+  ipc.handle('osc:set-enabled', (_e, { enabled }) => oscBridge.setEnabled(enabled))
+  ipc.handle('osc:set-host', (_e, { host }) => oscBridge.setHost(host))
+  ipc.handle('osc:set-port', (_e, { port }) => oscBridge.setPort(port))
+  ipc.handle('osc:metrics', (_e, { metrics }) => oscBridge.sendMetrics(metrics))
+  ipc.handle('osc:event', (_e, { address, n }) => oscBridge.sendEvent(address, n))
+
+  // ── Unreal Engine companion launcher ──────────────────────────────────────
+  ipc.handle('unreal:status', () => unrealLauncher.getStatus())
+  ipc.handle('unreal:start', () => unrealLauncher.start())
+  ipc.handle('unreal:stop', () => { unrealLauncher.stop(); return { ok: true } })
+  ipc.handle('unreal:config', (_e, { patch }) => { unrealLauncher.setConfig(patch); return { ok: true } })
+  ipc.handle('unreal:pick-exe', async () => {
+    const res = await dialog.showOpenDialog({
+      title: 'Locate UnrealEditor.exe (or a packaged build .exe)',
+      properties: ['openFile'],
+      filters: [{ name: 'Executable', extensions: ['exe'] }],
+    })
+    return res.canceled ? '' : (res.filePaths[0] ?? '')
+  })
+  ipc.handle('unreal:pick-project', async () => {
+    const res = await dialog.showOpenDialog({
+      title: 'Locate your .uproject',
+      properties: ['openFile'],
+      filters: [{ name: 'Unreal Project', extensions: ['uproject'] }],
+    })
+    return res.canceled ? '' : (res.filePaths[0] ?? '')
+  })
 
   // ── Custom visualizer shaders ─────────────────────────────────────────────
   ipc.handle('viz-shaders:list', () => vizShaders.list())

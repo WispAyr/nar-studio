@@ -3,6 +3,8 @@ import {
   type ReactNode, type MutableRefObject,
 } from 'react'
 import { VERT_SRC, SCENE_FRAG, BRIGHT_FRAG, BLUR_FRAG, COMPOSITE_FRAG, CUSTOM_PREAMBLE } from './shaders'
+import { NAR_LOGO_DATA_URI } from '../cg/narLogo'
+import { useCameraStreams, MAX_CAMERAS } from '../camera/CameraStreamProvider'
 
 const studio = (window as any).studio
 
@@ -38,10 +40,21 @@ export const VIZ_MODES = [
   { id: 20, label: 'Starfield', group: 'Geometric', hint: '3D volumetric star warp' },
   { id: 21, label: 'Ribbon', group: 'Geometric', hint: 'Flowing glossy neon ribbon' },
   { id: 22, label: 'Helix', group: 'Geometric', hint: 'Rotating double-helix of nodes' },
+  { id: 24, label: 'Terrain', group: 'Geometric', hint: 'Raymarched audio mountain flythrough' },
+  { id: 23, label: 'Galaxy', group: 'Artistic', hint: 'Audio-reactive spiral galaxy' },
+  { id: 25, label: 'Fluid', group: 'Artistic', hint: 'Curl-noise advected dye fluid' },
+  { id: 26, label: 'Logo Mark', group: 'Artistic', hint: 'Animated NAR ident with audio aura' },
+  { id: 27, label: 'Cymatics', group: 'Artistic', hint: 'Chladni standing-wave patterns' },
+  { id: 28, label: 'Live Cam', group: 'Artistic', hint: 'Live camera feed with audio-reactive treatment' },
+  { id: 29, label: 'Live Mosaic', group: 'Artistic', hint: 'All 4 cameras tiled, beat-pulsed borders, program highlight' },
+  { id: 30, label: 'PIP', group: 'Artistic', hint: 'Program camera + 3 insets — interview layout' },
+  { id: 31, label: 'Pace Display', group: 'Meters', hint: 'Pioneer-style BPM, beat grid + phase indicator' },
+  { id: 32, label: 'Slate', group: 'Meters', hint: 'SMPTE bars + NAR ident + clock — pre-broadcast holding card' },
+  { id: 33, label: 'Countdown', group: 'Meters', hint: 'Pre-broadcast "going live in…" countdown with LIVE flash' },
 ] as const
 
 export const VIZ_PALETTES = [
-  { id: 0, label: 'NAR Ember', swatch: '#e8003c' },
+  { id: 0, label: 'NAR Ember', swatch: '#e5202b' },
   { id: 1, label: 'Neon', swatch: '#7c5cff' },
   { id: 2, label: 'Emerald', swatch: '#22c55e' },
   { id: 3, label: 'Ice', swatch: '#5b8dff' },
@@ -63,6 +76,14 @@ export interface VizLevels {
   centroid: number
   /** 0..1 sawtooth through the current (tempo-tracked) beat. */
   beatPhase: number
+  /** Tempo in beats-per-minute, smoothed from a window of recent IBIs. */
+  bpm: number
+  /** True when we have enough stable beats from real audio to trust the BPM. */
+  bpmConfident: boolean
+  /** Approximate momentary loudness in LUFS (K-weighted, ITU-R BS.1770). */
+  lufs: number
+  /** Smoothed render-loop frame rate, for the diagnostics widget. */
+  fps: number
 }
 
 interface VizContextValue {
@@ -91,6 +112,37 @@ interface VizContextValue {
   setCustomMode: (name: string) => void
   /** Open the folder where custom shaders live. */
   openShaderFolder: () => void
+  /** Which live camera the Live Cam mode (and any custom shader) reads (0–3). */
+  camPick: number
+  setCamPick: (i: number) => void
+  /** When true, the Live Cam camera tracks whichever camera is on program. */
+  camAuto: boolean
+  setCamAuto: (on: boolean) => void
+  /**
+   * Trim on the audio fed into the visualizer analyser, in percent. Lives
+   * separately from the broadcast gain — the operator can hit the viz hard
+   * for tighter reactivity without affecting what the stream hears.
+   */
+  audioGain: number
+  setAudioGain: (g: number) => void
+  /**
+   * Output brightness of the final composited image, in percent. 0 = black,
+   * 100 = unity. Applied at the very end so bloom, flares and grain are all
+   * attenuated together.
+   */
+  brightness: number
+  setBrightness: (b: number) => void
+  /**
+   * Bloom dose, in percent. Scales the bloom + anamorphic flare + lens dirt
+   * together so the operator can tone down the "halo soup" without touching
+   * the base scene.
+   */
+  bloomAmount: number
+  setBloomAmount: (b: number) => void
+  /** Pre-broadcast countdown. -3 < seconds <= 0 enters the LIVE flash state. */
+  countdownDuration: number
+  startCountdown: (seconds: number) => void
+  stopCountdown: () => void
   /**
    * Register a consumer of the visualizer. While at least one is held the GPU
    * pipeline renders; with none it idles (audio analysis keeps running).
@@ -138,14 +190,19 @@ function uniformMap(
 
 interface RenderTarget { tex: WebGLTexture; fbo: WebGLFramebuffer }
 
-function makeTarget(gl: WebGL2RenderingContext, w: number, h: number): RenderTarget {
+function makeTarget(
+  gl: WebGL2RenderingContext, w: number, h: number, mip = false,
+): RenderTarget {
   const tex = gl.createTexture()!
   gl.bindTexture(gl.TEXTURE_2D, tex)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  // A mip target feeds the multi-scale bloom — it needs a trilinear min filter
+  // and a complete mip chain (rebuilt each frame after the blur passes).
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mip ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  if (mip) gl.generateMipmap(gl.TEXTURE_2D)   // start mip-complete
   const fbo = gl.createFramebuffer()!
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
@@ -156,7 +213,11 @@ function makeTarget(gl: WebGL2RenderingContext, w: number, h: number): RenderTar
 const SCENE_UNIFORMS = [
   'uRes', 'uTime', 'uLevel', 'uBass', 'uMid', 'uTreble', 'uBeat', 'uMode', 'uPalette',
   'uSpectrum', 'uSpecPeak', 'uWave', 'uScope', 'uPrev',
-  'uVuL', 'uVuR', 'uVuPeakL', 'uVuPeakR', 'uCentroid', 'uBeatPhase',
+  'uVuL', 'uVuR', 'uVuPeakL', 'uVuPeakR', 'uCentroid', 'uBeatPhase', 'uLogo',
+  'uCam0', 'uCam1', 'uCam2', 'uCam3', 'uCamPick',
+  'uBpm', 'uBarPhase', 'uBpmLocked',
+  'uTimeH', 'uTimeM', 'uTimeS',
+  'uCountdown', 'uCountdownDuration',
 ]
 
 /** Compile a user / ISF shader, wrapped so it runs in our WebGL2 context. */
@@ -185,9 +246,14 @@ export function VizProvider({ children }: { children: ReactNode }) {
     canvasRef.current = c
   }
 
+  // Master camera <video> elements — uploaded as GL textures each frame so the
+  // viz can sample the live feeds. The ref's identity is stable; the render
+  // loop reads .current to see the live videos.
+  const { videoEls } = useCameraStreams()
+
   const [mode, setModeState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-mode'))
-    return v >= 0 && v <= 22 ? v : 1
+    return v >= 0 && v <= 33 ? v : 1
   })
   const [palette, setPaletteState] = useState(() => {
     const v = Number(localStorage.getItem('nar-viz-palette'))
@@ -200,6 +266,41 @@ export function VizProvider({ children }: { children: ReactNode }) {
   const [kaleido, setKaleidoState] = useState(() => localStorage.getItem('nar-viz-kaleido') === 'on')
   const [autoCycle, setAutoCycleState] = useState(() => localStorage.getItem('nar-viz-autocycle') === 'on')
   const [audioActive, setAudioActive] = useState(false)
+  const [camPick, setCamPickState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-viz-cam-pick'))
+    return v >= 0 && v <= 3 ? v : 0
+  })
+  const [camAuto, setCamAutoState] = useState(() => localStorage.getItem('nar-viz-cam-auto') !== 'off')
+  const [audioGain, setAudioGainState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-viz-audio-gain'))
+    return Number.isFinite(v) && v >= 0 && v <= 400 ? v : 100
+  })
+  // Master output brightness — multiplied at the very end of the composite
+  // pass so 0 actually paints black (independent of bloom + post-fx, which
+  // uIntensity doesn't reach).
+  const [brightness, setBrightnessState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-viz-brightness'))
+    return Number.isFinite(v) && v >= 0 && v <= 150 ? v : 100
+  })
+  const brightnessRef = useRef(brightness / 100)
+  brightnessRef.current = brightness / 100
+  // Bloom dose. Scales the multi-scale bloom sum + anamorphic flare + lens
+  // dirt together so the operator only needs one knob to tame "halo soup".
+  const [bloomAmount, setBloomAmountState] = useState(() => {
+    const v = Number(localStorage.getItem('nar-viz-bloom'))
+    return Number.isFinite(v) && v >= 0 && v <= 200 ? v : 100
+  })
+  const bloomAmountRef = useRef(bloomAmount / 100)
+  bloomAmountRef.current = bloomAmount / 100
+  // The live GainNode sits between the device source and the analyser. The
+  // capture closure stores a setter here so the React-side slider can drive
+  // it without re-creating the audio graph.
+  const vizGainApplyRef = useRef<((g: number) => void) | null>(null)
+  const audioGainRef = useRef(audioGain)
+  audioGainRef.current = audioGain
+  const [countdownDuration, setCountdownDurationState] = useState(30)
+  const countdownStartRef = useRef(0)
+  const countdownDurationRef = useRef(30)
 
   const modeRef = useRef(mode)
   modeRef.current = mode
@@ -211,6 +312,8 @@ export function VizProvider({ children }: { children: ReactNode }) {
   kaleidoRef.current = kaleido
   const levelsRef = useRef<VizLevels>({
     bass: 0, mid: 0, treble: 0, level: 0, beat: 0, beatAt: 0, centroid: 0, beatPhase: 0,
+    bpm: 0, bpmConfident: false,
+    lufs: -60, fps: 60,
   })
   // How many things currently display the visualizer. When zero, the render
   // loop skips the GPU passes — the viz only costs GPU when it is actually seen.
@@ -220,6 +323,8 @@ export function VizProvider({ children }: { children: ReactNode }) {
   const [customMode, setCustomModeState] = useState<string | null>(() => localStorage.getItem('nar-viz-custom'))
   const customModeRef = useRef(customMode)
   customModeRef.current = customMode
+  const camPickRef = useRef(camPick)
+  camPickRef.current = camPick
 
   const setMode = useCallback((m: number) => {
     localStorage.setItem('nar-viz-mode', String(m))
@@ -248,11 +353,64 @@ export function VizProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('nar-viz-autocycle', on ? 'on' : 'off')
     setAutoCycleState(on)
   }, [])
+  const setCamPick = useCallback((i: number) => {
+    if (i < 0 || i > 3) return
+    localStorage.setItem('nar-viz-cam-pick', String(i))
+    setCamPickState(i)
+  }, [])
+  const setCamAuto = useCallback((on: boolean) => {
+    localStorage.setItem('nar-viz-cam-auto', on ? 'on' : 'off')
+    setCamAutoState(on)
+  }, [])
+  const setAudioGain = useCallback((g: number) => {
+    const clamped = Math.max(0, Math.min(400, g))
+    localStorage.setItem('nar-viz-audio-gain', String(clamped))
+    setAudioGainState(clamped)
+    vizGainApplyRef.current?.(clamped)
+  }, [])
+  const setBrightness = useCallback((b: number) => {
+    const clamped = Math.max(0, Math.min(150, b))
+    localStorage.setItem('nar-viz-brightness', String(clamped))
+    setBrightnessState(clamped)
+  }, [])
+  const setBloomAmount = useCallback((b: number) => {
+    const clamped = Math.max(0, Math.min(200, b))
+    localStorage.setItem('nar-viz-bloom', String(clamped))
+    setBloomAmountState(clamped)
+  }, [])
+  const startCountdown = useCallback((seconds: number) => {
+    const s = Math.max(1, Math.min(120, Math.round(seconds)))
+    countdownDurationRef.current = s
+    countdownStartRef.current = Date.now()
+    setCountdownDurationState(s)
+  }, [])
+  const stopCountdown = useCallback(() => {
+    countdownStartRef.current = 0
+  }, [])
 
-  // Auto-cycle — rotate through the modes on a slow timer.
+  // Auto-cycle — pace to the music. Advances mode every 32 detected beats,
+  // with a 60s wall-clock fallback so silence still rotates the look.
   useEffect(() => {
     if (!autoCycle) return
-    const id = window.setInterval(() => setMode((modeRef.current + 1) % VIZ_MODES.length), 32000)
+    let beatCount = 0
+    let lastBeatAt = levelsRef.current.beatAt
+    let lastAdvanceAt = performance.now()
+    const TICK_MS = 250
+    const BEATS_PER_CYCLE = 32
+    const FALLBACK_MS = 60000
+    const id = window.setInterval(() => {
+      const lv = levelsRef.current
+      if (lv.beatAt > lastBeatAt) {
+        beatCount += 1
+        lastBeatAt = lv.beatAt
+      }
+      const elapsed = performance.now() - lastAdvanceAt
+      if (beatCount >= BEATS_PER_CYCLE || elapsed > FALLBACK_MS) {
+        setMode((modeRef.current + 1) % VIZ_MODES.length)
+        beatCount = 0
+        lastAdvanceAt = performance.now()
+      }
+    }, TICK_MS)
     return () => window.clearInterval(id)
   }, [autoCycle, setMode])
 
@@ -287,7 +445,7 @@ export function VizProvider({ children }: { children: ReactNode }) {
     const brightU = uniformMap(gl, brightProg, ['uScene', 'uRes'])
     const blurU = uniformMap(gl, blurProg, ['uTex', 'uRes', 'uDir'])
     const compU = uniformMap(gl, compProg,
-      ['uScene', 'uBloom', 'uRes', 'uTime', 'uIntensity', 'uBeat', 'uTreble', 'uKaleido'])
+      ['uScene', 'uBloom', 'uRes', 'uTime', 'uIntensity', 'uBeat', 'uTreble', 'uKaleido', 'uVizBrightness', 'uBloomAmount'])
 
     // Texture units: 0 spectrum · 1 scene/feedback · 2 peak/blur · 3 wave · 4 scope.
     gl.useProgram(sceneProg)
@@ -296,6 +454,11 @@ export function VizProvider({ children }: { children: ReactNode }) {
     gl.uniform1i(sceneU.uWave, 3)
     gl.uniform1i(sceneU.uScope, 4)
     gl.uniform1i(sceneU.uPrev, 1)
+    gl.uniform1i(sceneU.uLogo, 5)
+    gl.uniform1i(sceneU.uCam0, 6)
+    gl.uniform1i(sceneU.uCam1, 7)
+    gl.uniform1i(sceneU.uCam2, 8)
+    gl.uniform1i(sceneU.uCam3, 9)
     gl.useProgram(brightProg)
     gl.uniform1i(brightU.uScene, 1)
     gl.useProgram(blurProg)
@@ -335,8 +498,28 @@ export function VizProvider({ children }: { children: ReactNode }) {
 
     // Ping-pong scene buffers (frame feedback) + quarter-res bloom buffers.
     const scene = [makeTarget(gl, VIZ_W, VIZ_H), makeTarget(gl, VIZ_W, VIZ_H)]
-    const bloom = [makeTarget(gl, BLOOM_W, BLOOM_H), makeTarget(gl, BLOOM_W, BLOOM_H)]
+    // bloom[0] is the final glow buffer the compositor mip-samples — give it a chain.
+    const bloom = [makeTarget(gl, BLOOM_W, BLOOM_H, true), makeTarget(gl, BLOOM_W, BLOOM_H)]
     let cur = 0
+
+    // ── Live camera textures — units 6..9, refreshed in the render loop ─────
+    const camTex: WebGLTexture[] = []
+    for (let i = 0; i < MAX_CAMERAS; i++) {
+      const t = gl.createTexture()!
+      gl.bindTexture(gl.TEXTURE_2D, t)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      // 1×1 black placeholder until the camera produces a frame
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+        new Uint8Array([0, 0, 0, 255]))
+      camTex.push(t)
+      // Stay bound to the matching texture unit — other passes only touch 0–4.
+      gl.activeTexture(gl.TEXTURE0 + 6 + i)
+      gl.bindTexture(gl.TEXTURE_2D, t)
+    }
+    const lastCamTime = [0, 0, 0, 0]
 
     // ── Audio — independent capture of the studio desk device ───────────────
     let audioCtx: AudioContext | null = null
@@ -347,10 +530,32 @@ export function VizProvider({ children }: { children: ReactNode }) {
     let freqData = new Uint8Array(0)
     let prevFreq = new Float32Array(0)
     let timeData = new Uint8Array(0)
+    let timeFloat = new Float32Array(0)
     let vuBufL = new Uint8Array(0)
     let vuBufR = new Uint8Array(0)
     let currentDevice = localStorage.getItem('nar-audio-device') || ''
     let disposed = false
+
+    // ── Brand logo texture — sampled by the Logo Mark mode (unit 5) ─────────
+    const logoTex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, logoTex)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    // 1×1 transparent placeholder until the embedded logo decodes
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 0]))
+    const logoImg = new Image()
+    logoImg.onload = () => {
+      if (disposed) return
+      gl.bindTexture(gl.TEXTURE_2D, logoTex)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, logoImg)
+    }
+    logoImg.src = NAR_LOGO_DATA_URI
+    // Stays bound to unit 5 — other passes only touch 0–4.
+    gl.activeTexture(gl.TEXTURE5)
+    gl.bindTexture(gl.TEXTURE_2D, logoTex)
 
     const teardownAudio = () => {
       try { stream?.getTracks().forEach(t => t.stop()) } catch { /* ignore */ }
@@ -360,6 +565,7 @@ export function VizProvider({ children }: { children: ReactNode }) {
       analyser = null
       analyserL = null
       analyserR = null
+      vizGainApplyRef.current = null
     }
 
     const capture = async (deviceId: string) => {
@@ -375,17 +581,31 @@ export function VizProvider({ children }: { children: ReactNode }) {
         audioCtx = new AudioContext()
         audioCtx.resume().catch(() => { /* resumed on first gesture */ })
         const node = audioCtx.createMediaStreamSource(stream)
+        // Separate from broadcast — only the viz analyser hears this gain.
+        // Operator drives it via the VIZ slider; persists across restarts.
+        const vizGain = audioCtx.createGain()
+        vizGain.gain.value = audioGainRef.current / 100
+        node.connect(vizGain)
+        vizGainApplyRef.current = (pct: number) => {
+          if (!audioCtx) return
+          const target = pct / 100
+          try {
+            vizGain.gain.cancelScheduledValues(audioCtx.currentTime)
+            vizGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.03)
+          } catch { vizGain.gain.value = target }
+        }
         analyser = audioCtx.createAnalyser()
         analyser.fftSize = 2048
         // Light smoothing — spectral flux needs frame-to-frame change to survive.
         analyser.smoothingTimeConstant = 0.6
-        node.connect(analyser)
+        vizGain.connect(analyser)
         freqData = new Uint8Array(analyser.frequencyBinCount)
         prevFreq = new Float32Array(analyser.frequencyBinCount)
         timeData = new Uint8Array(analyser.fftSize)
+        timeFloat = new Float32Array(analyser.fftSize)
         // Stereo split — drives the L/R VU meters and the X-Y scope.
         const splitter = audioCtx.createChannelSplitter(2)
-        node.connect(splitter)
+        vizGain.connect(splitter)
         analyserL = audioCtx.createAnalyser()
         analyserR = audioCtx.createAnalyser()
         analyserL.fftSize = 1024
@@ -429,6 +649,11 @@ export function VizProvider({ children }: { children: ReactNode }) {
         gl.uniform1i(u.uSpectrum, 0)
         gl.uniform1i(u.uPrev, 1)
         gl.uniform1i(u.uWave, 3)
+        gl.uniform1i(u.uLogo, 5)
+        gl.uniform1i(u.uCam0, 6)
+        gl.uniform1i(u.uCam1, 7)
+        gl.uniform1i(u.uCam2, 8)
+        gl.uniform1i(u.uCam3, 9)
         customProgs.push({ name: item.name, prog, u })
       }
       setCustomShaders(customProgs.map(c => c.name))
@@ -442,6 +667,39 @@ export function VizProvider({ children }: { children: ReactNode }) {
     let beatEnv = 0
     let lastBeat = 0
     let beatPeriod = 0.5
+    // Sliding window of inter-beat intervals (seconds) — only filled from real
+    // audio onsets, so the synthetic idle path never poisons the BPM estimate.
+    const ibiHistory: number[] = []
+    let smBpm = 0
+    let bpmConfident = false
+    // Diagnostics — render-loop FPS, sampled once per second.
+    let frameCount = 0
+    let lastFpsAt = 0
+    let smFps = 60
+    // LUFS — ITU-R BS.1770 K-weighting filter state (48 kHz coefficients).
+    // Two cascaded biquads: pre-filter (high-shelf at ~1.68 kHz +4 dB) + 38 Hz
+    // high-pass. K-weighted samples are squared and meaned for momentary LUFS.
+    let smLufs = -60
+    let kpX1 = 0, kpX2 = 0, kpY1 = 0, kpY2 = 0
+    let khX1 = 0, khX2 = 0, khY1 = 0, khY2 = 0
+    // Onset envelope + periodic autocorrelation — the Pioneer-deck-style tempo
+    // validator that catches half/double-tempo errors the IBI median can lock
+    // onto. Sample rate is measured (not assumed) so display refresh doesn't
+    // bias the result.
+    const onsetEnv: number[] = []
+    let lastFluxPushAt = 0
+    let envSampleSec = 1 / 60
+    let lastAcAt = 0
+    let acBpm = 0
+    // Phase-locked beat tracking — once a stable tempo is acquired, only onsets
+    // aligned with the grid update the tempo. Builds, breakdowns and stray hits
+    // can't drag it around. Lock breaks if we miss ~4 consecutive beats OR the
+    // autocorrelation strongly disagrees with the locked tempo for several secs.
+    let phaseLocked = false
+    let gridAnchor = 0
+    let lastConfirmingBeat = 0
+    let lastLockLossAt = 0
+    let acDisagreement = 0
     let smCentroid = 0
     let vuL = 0, vuR = 0, vuPeakL = 0, vuPeakR = 0
     let raf = 0
@@ -461,11 +719,26 @@ export function VizProvider({ children }: { children: ReactNode }) {
       return Math.min(1, Math.max(0, (db + 54) / 54))
     }
 
+    // Soft compressor on the audio level signals — linear below 0.55, a gentle
+    // exponential knee above. Keeps loud passages from overdriving the per-mode
+    // brightness multipliers (which would strobe) while preserving dynamics.
+    const softCap = (x: number): number =>
+      x <= 0.55 ? x : 0.55 + (1.0 - Math.exp(-(x - 0.55) * 2.4)) * 0.45
+
     const drawQuad = () => gl.drawArrays(gl.TRIANGLES, 0, 3)
 
     const draw = () => {
       raf = requestAnimationFrame(draw)
       const now = performance.now() / 1000
+
+      // FPS — sampled once per second, gently smoothed.
+      frameCount++
+      if (now - lastFpsAt > 1.0) {
+        const measured = frameCount / Math.max(0.001, now - lastFpsAt)
+        smFps += (measured - smFps) * 0.30
+        frameCount = 0
+        lastFpsAt = now
+      }
 
       let bass = 0, mid = 0, treble = 0, level = 0, centroid = 0
       let vuLraw = 0, vuRraw = 0
@@ -478,22 +751,35 @@ export function VizProvider({ children }: { children: ReactNode }) {
         mid = band(8, 70)
         treble = band(70, 320)
 
-        // Spectral flux (onset energy) + spectral centroid (brightness).
+        // Spectral flux focused on the kick/snare/low-mid band (bins 2..50 ≈
+        // 50–1170 Hz at 48 kHz) — beat-bearing transients live here. Longer
+        // fluxHist gives a more stable adaptive threshold for a Pioneer-style lock.
+        const FLUX_HI = 50
         let fl = 0, csum = 0, cwsum = 0
         for (let i = 2; i < n; i++) {
           const m = freqData[i] / 255
           const d = m - prevFreq[i]
-          if (d > 0) fl += d
+          if (d > 0 && i <= FLUX_HI) fl += d
           prevFreq[i] = m
           csum += m
           cwsum += m * i
         }
-        const flux = fl / n
+        const flux = fl / (FLUX_HI - 1)
         centroid = csum > 1e-4 ? Math.min(1, (cwsum / csum) / 200) : 0
         fluxHist.push(flux)
-        if (fluxHist.length > 43) fluxHist.shift()
+        if (fluxHist.length > 120) fluxHist.shift()
         const fluxAvg = fluxHist.reduce((a, b) => a + b, 0) / fluxHist.length
-        onset = flux > fluxAvg * 1.6 && flux > 0.002 && (now - lastBeat) > 0.12
+        onset = flux > fluxAvg * 1.7 && flux > 0.015 && (now - lastBeat) > 0.18
+
+        // Sample the onset envelope at ~60 Hz for the periodic autocorrelation.
+        if (now - lastFluxPushAt > 0.015) {
+          if (lastFluxPushAt > 0) {
+            envSampleSec += ((now - lastFluxPushAt) - envSampleSec) * 0.03
+          }
+          lastFluxPushAt = now
+          onsetEnv.push(flux)
+          if (onsetEnv.length > 360) onsetEnv.shift()
+        }
 
         // Octave-band spectrum with a perceptual treble tilt — keeps the top
         // end alive instead of drooping into nothing.
@@ -515,6 +801,36 @@ export function VizProvider({ children }: { children: ReactNode }) {
         // Time-domain waveform — downsampled to the 256-wide texture.
         analyser.getByteTimeDomainData(timeData)
         for (let x = 0; x < SPEC_N; x++) waveBytes[x] = timeData[Math.min(timeData.length - 1, x * 8)]
+
+        // LUFS — K-weighted RMS over the float time-domain buffer (BS.1770).
+        // Coefficients are for 48 kHz; at 44.1 kHz the result is close enough
+        // for monitoring — not a compliance-grade integrated value.
+        analyser.getFloatTimeDomainData(timeFloat)
+        let lSum = 0
+        const lN = timeFloat.length
+        for (let i = 0; i < lN; i++) {
+          const x = timeFloat[i]
+          // Stage 1: shelving pre-filter
+          const y1 = 1.53512485958697 * x
+                   - 2.69169618940638 * kpX1
+                   + 1.19839281085285 * kpX2
+                   + 1.69065929318241 * kpY1
+                   - 0.73248077421585 * kpY2
+          kpX2 = kpX1; kpX1 = x
+          kpY2 = kpY1; kpY1 = y1
+          // Stage 2: 38 Hz high-pass
+          const y2 = y1
+                   - 2.0 * khX1
+                   + khX2
+                   + 1.99004745483398 * khY1
+                   - 0.99007225036621 * khY2
+          khX2 = khX1; khX1 = y1
+          khY2 = khY1; khY1 = y2
+          lSum += y2 * y2
+        }
+        const meanSq = lSum / lN
+        const lufs = -0.691 + 10 * Math.log10(meanSq + 1e-10)
+        smLufs += (Math.max(-70, lufs) - smLufs) * 0.18
 
         // Stereo VU + X-Y scope.
         if (analyserL && analyserR) {
@@ -563,19 +879,155 @@ export function VizProvider({ children }: { children: ReactNode }) {
       sm.level = ar(level, sm.level)
       smCentroid += (centroid - smCentroid) * 0.12
 
-      // Beat — flux onsets, with a tracked period for a smooth beat-phase clock.
+      // Beat tracking — when phase-locked, only onsets aligned with the beat
+      // grid update tempo and the beat marker. Off-grid onsets (snare rolls in
+      // builds, sparse hits in breakdowns) just pulse the visual envelope and
+      // never pollute the tempo. The grid keeps ticking with no onsets too, so
+      // breakdowns don't lose the pace.
       if (onset) {
-        const interval = now - lastBeat
-        if (interval > 0.30 && interval < 1.05) beatPeriod = beatPeriod * 0.78 + interval * 0.22
-        lastBeat = now
-        beatEnv = 1
+        if (phaseLocked) {
+          const k = Math.round((now - gridAnchor) / beatPeriod)
+          const phaseError = now - (gridAnchor + k * beatPeriod)
+          const tolerance = beatPeriod * 0.20
+          if (Math.abs(phaseError) < tolerance) {
+            // Confirming beat — gentle drift correction + small tempo nudge
+            gridAnchor += phaseError * 0.30
+            const interval = now - lastBeat
+            if (interval > beatPeriod * 0.80 && interval < beatPeriod * 1.20) {
+              beatPeriod += (interval - beatPeriod) * 0.05
+              if (analyser) {
+                ibiHistory.push(interval)
+                if (ibiHistory.length > 48) ibiHistory.shift()
+              }
+            }
+            lastBeat = now
+            lastConfirmingBeat = now
+            beatEnv = 1
+          } else {
+            // Off-beat onset — visual pulse only, never updates tempo
+            beatEnv = Math.max(beatEnv, 0.45)
+          }
+        } else {
+          // Unlocked — bootstrap from any reasonable onset
+          const interval = now - lastBeat
+          if (interval > 0.30 && interval < 1.05) {
+            beatPeriod = beatPeriod * 0.78 + interval * 0.22
+            if (analyser) {
+              ibiHistory.push(interval)
+              if (ibiHistory.length > 48) ibiHistory.shift()
+            }
+          }
+          lastBeat = now
+          beatEnv = 1
+        }
       }
       beatEnv *= 0.90
-      const beatPhase = Math.min(1, (now - lastBeat) / beatPeriod)
+
+      // Lock acquisition / release — survives breakdowns by holding the grid
+      // even when onsets dry up. Loses lock only if ~6 predicted beats pass
+      // without a confirming detection; 2 s cooldown prevents lock thrash.
+      if (!phaseLocked && bpmConfident && now - lastLockLossAt > 2.0) {
+        phaseLocked = true
+        gridAnchor = lastBeat
+        lastConfirmingBeat = lastBeat
+      } else if (phaseLocked && now - lastConfirmingBeat > 4 * beatPeriod) {
+        phaseLocked = false
+        lastLockLossAt = now
+        ibiHistory.length = 0   // fresh start — old tempo is no longer relevant
+        acDisagreement = 0
+      }
+
+      // Beat phase — continuous sawtooth while locked, so visuals keyed off
+      // uBeatPhase keep moving even through a silent breakdown.
+      const beatPhase = phaseLocked
+        ? ((((now - gridAnchor) % beatPeriod) + beatPeriod) % beatPeriod) / beatPeriod
+        : Math.min(1, (now - lastBeat) / beatPeriod)
+      // Bar phase — 0..1 across 4 beats. Drives the Pace Display dot row.
+      const barLen = beatPeriod * 4
+      const barPhase = phaseLocked
+        ? ((((now - gridAnchor) % barLen) + barLen) % barLen) / barLen
+        : 0
+
+      // Periodic autocorrelation on the onset envelope — Pioneer-style tempo
+      // validator. Finds the lag with the strongest periodicity, then BPM =
+      // 60 / (sampleInterval * lag). Run once per second; the window is short.
+      if (analyser && onsetEnv.length >= 90 && now - lastAcAt > 1.0) {
+        lastAcAt = now
+        let bestLag = 0, bestCorr = 0
+        const Nbuf = onsetEnv.length
+        // Lag range 18..60 at ~60 Hz sampling ≈ 60..200 BPM
+        for (let lag = 18; lag <= 60; lag++) {
+          let c = 0
+          for (let i = lag; i < Nbuf; i++) c += onsetEnv[i] * onsetEnv[i - lag]
+          c /= (Nbuf - lag)
+          if (c > bestCorr) { bestCorr = c; bestLag = lag }
+        }
+        if (bestLag > 0) {
+          acBpm = 60 / (envSampleSec * bestLag)
+          // Auto-unlock if AC strongly disagrees with the locked tempo for ~3s
+          // (escapes a wrong lock when the track changes tempo or transitions).
+          if (phaseLocked && smBpm > 0) {
+            const r = acBpm / smBpm
+            if ((r > 1.80 && r < 2.20) || (r > 0.45 && r < 0.55)) {
+              acDisagreement++
+              if (acDisagreement >= 3) {
+                phaseLocked = false
+                lastLockLossAt = now
+                ibiHistory.length = 0
+                acDisagreement = 0
+              }
+            } else {
+              acDisagreement = 0
+            }
+          }
+        } else {
+          acBpm = 0
+        }
+      }
+
+      // Pace — median IBI over the window is the base BPM estimate. Two
+      // refinements push it toward Pioneer-deck reliability:
+      //   1. Cross-check with the autocorrelation peak: when AC strongly says
+      //      "you're at half or double tempo," it wins. Catches the classic
+      //      IBI-median failure mode where a syncopated kick fools onset timing.
+      //   2. Octave fold — pop/dance/rock sits at 70..160 BPM; outside that,
+      //      the tempo is almost always one octave off.
+      if (ibiHistory.length >= 6) {
+        const sorted = ibiHistory.slice().sort((a, b) => a - b)
+        const med = sorted[Math.floor(sorted.length / 2)]
+        let targetBpm = 60 / med
+        // AC override only when NOT phase-locked — once locked, the grid logic
+        // already keeps off-beat onsets out of ibiHistory; AC during a build
+        // might catch sub-beats and falsely "correct" us off the real tempo.
+        if (!phaseLocked && acBpm > 55 && acBpm < 215) {
+          const r = acBpm / targetBpm
+          if (r > 1.80 && r < 2.20) targetBpm = acBpm        // median was half-tempo
+          else if (r > 0.45 && r < 0.55) targetBpm = acBpm   // median was double-tempo
+        }
+        if (targetBpm > 165) targetBpm *= 0.5
+        else if (targetBpm < 65) targetBpm *= 2
+        // Slower smoothing when locked (stable hold), faster when unlocked
+        // (catch up quickly after a track change or a real tempo shift).
+        const rate = phaseLocked ? 0.06 : 0.18
+        smBpm = smBpm === 0 ? targetBpm : smBpm + (targetBpm - smBpm) * rate
+        let mean = 0
+        for (const v of sorted) mean += v
+        mean /= sorted.length
+        let sq = 0
+        for (const v of sorted) sq += (v - mean) * (v - mean)
+        const cv = Math.sqrt(sq / sorted.length) / mean
+        // Tighter confidence: small CV + locked sample + real audio level.
+        bpmConfident = ibiHistory.length >= 8 && cv < 0.12 && analyser !== null && sm.level > 0.02
+      } else {
+        bpmConfident = false
+      }
 
       levelsRef.current = {
-        bass: sm.bass, mid: sm.mid, treble: sm.treble, level: sm.level,
+        bass: softCap(sm.bass), mid: softCap(sm.mid),
+        treble: softCap(sm.treble), level: softCap(sm.level),
         beat: beatEnv, beatAt: lastBeat, centroid: smCentroid, beatPhase,
+        bpm: smBpm, bpmConfident,
+        lufs: smLufs, fps: smFps,
       }
 
       // Spectrum bytes + slowly-falling peak-hold for the bar analyzer.
@@ -595,6 +1047,26 @@ export function VizProvider({ children }: { children: ReactNode }) {
       // levelsRef live for beat FX and the director, but skip the costly
       // 7-pass GPU render entirely until a consumer needs it.
       if (consumersRef.current <= 0) return
+
+      // Upload live camera frames when the active mode needs them (Live Cam, or
+      // any custom shader that might sample them). Throttled by currentTime so
+      // we only push genuine new frames, not every render tick.
+      const needCam = modeRef.current === 28 || modeRef.current === 29 || modeRef.current === 30 || customModeRef.current != null
+      if (needCam) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+        for (let i = 0; i < MAX_CAMERAS; i++) {
+          const v = videoEls.current[i]
+          if (v && v.readyState >= 2 && v.currentTime !== lastCamTime[i]) {
+            lastCamTime[i] = v.currentTime
+            gl.activeTexture(gl.TEXTURE0 + 6 + i)
+            gl.bindTexture(gl.TEXTURE_2D, camTex[i])
+            try {
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, v)
+            } catch { /* video not ready / browser quirk — try next frame */ }
+          }
+        }
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+      }
 
       const prevIdx = 1 - cur
 
@@ -636,6 +1108,23 @@ export function VizProvider({ children }: { children: ReactNode }) {
       gl.uniform1f(p1u.uVuPeakR, vuPeakR)
       gl.uniform1i(p1u.uMode, modeRef.current)
       gl.uniform1i(p1u.uPalette, paletteRef.current)
+      gl.uniform1i(p1u.uCamPick, camPickRef.current)
+      gl.uniform1f(p1u.uBpm, smBpm)
+      gl.uniform1f(p1u.uBarPhase, barPhase)
+      gl.uniform1f(p1u.uBpmLocked, (bpmConfident || phaseLocked) ? 1.0 : 0.0)
+      const dNow = new Date()
+      gl.uniform1f(p1u.uTimeH, dNow.getHours())
+      gl.uniform1f(p1u.uTimeM, dNow.getMinutes())
+      gl.uniform1f(p1u.uTimeS, dNow.getSeconds())
+      // Countdown — sentinel +999 when not active so the shader stays in idle.
+      let ctd = 999.0
+      if (countdownStartRef.current > 0) {
+        const elapsed = (Date.now() - countdownStartRef.current) / 1000
+        ctd = countdownDurationRef.current - elapsed
+        if (ctd < -3) { countdownStartRef.current = 0; ctd = 999.0 }
+      }
+      gl.uniform1f(p1u.uCountdown, ctd)
+      gl.uniform1f(p1u.uCountdownDuration, countdownDurationRef.current)
       drawQuad()
 
       // Pass 2 — bright-pass extract (quarter res).
@@ -670,12 +1159,15 @@ export function VizProvider({ children }: { children: ReactNode }) {
       gl.bindTexture(gl.TEXTURE_2D, scene[cur].tex)
       gl.activeTexture(gl.TEXTURE2)
       gl.bindTexture(gl.TEXTURE_2D, bloom[0].tex)
+      gl.generateMipmap(gl.TEXTURE_2D)   // rebuild the bloom mip chain for multi-scale glow
       gl.uniform2f(compU.uRes, VIZ_W, VIZ_H)
       gl.uniform1f(compU.uTime, now)
       gl.uniform1f(compU.uIntensity, intensityRef.current)
       gl.uniform1f(compU.uBeat, beatEnv)
       gl.uniform1f(compU.uTreble, sm.treble)
       gl.uniform1i(compU.uKaleido, kaleidoRef.current ? 6 : 0)
+      gl.uniform1f(compU.uVizBrightness, brightnessRef.current)
+      gl.uniform1f(compU.uBloomAmount, bloomAmountRef.current)
       drawQuad()
 
       cur = prevIdx
@@ -698,6 +1190,8 @@ export function VizProvider({ children }: { children: ReactNode }) {
       gl.deleteTexture(specPeakTex)
       gl.deleteTexture(waveTex)
       gl.deleteTexture(scopeTex)
+      gl.deleteTexture(logoTex)
+      for (const t of camTex) gl.deleteTexture(t)
       gl.deleteVertexArray(vao)
       for (const t of scene) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo) }
       for (const t of bloom) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo) }
@@ -716,6 +1210,11 @@ export function VizProvider({ children }: { children: ReactNode }) {
       getCanvas, mode, setMode, palette, setPalette, intensity, setIntensity,
       kaleido, setKaleido, autoCycle, setAutoCycle, audioActive, levelsRef,
       customShaders, customMode, setCustomMode, openShaderFolder, acquire,
+      camPick, setCamPick, camAuto, setCamAuto,
+      audioGain, setAudioGain,
+      brightness, setBrightness,
+      bloomAmount, setBloomAmount,
+      countdownDuration, startCountdown, stopCountdown,
     }}>
       {children}
     </Ctx.Provider>

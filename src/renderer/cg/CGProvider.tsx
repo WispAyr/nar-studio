@@ -12,8 +12,16 @@ const LAYER_EXIT_MS = 380
 export const TITLE_TEMPLATES: { template: TitleTemplate; label: string }[] = [
   { template: 'show-lower-third', label: 'Show Lower-Third' },
   { template: 'up-next', label: 'Up Next' },
+  { template: 'now-playing', label: 'Now Playing' },
+  { template: 'captions', label: 'Captions' },
   { template: 'clock', label: 'Clock' },
 ]
+
+interface NowPlaying { track: string; artist: string }
+
+/** True when this Chromium build exposes the Web Speech Recognition API. */
+const SPEECH_AVAILABLE = typeof window !== 'undefined' &&
+  (!!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition)
 
 type CgElement = HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
 
@@ -28,6 +36,15 @@ interface CGContextValue {
   setBlend: (id: string, blend: GlobalCompositeOperation) => void
   raiseLayer: (id: string) => void
   openFolder: (category?: string) => void
+  nowPlaying: NowPlaying
+  setNowPlaying: (track: string, artist: string) => void
+  /** Optional HTTP endpoint polled for live track metadata. Empty = manual. */
+  nowPlayingUrl: string
+  setNowPlayingUrl: (url: string) => void
+  captionText: string
+  captionsOn: boolean
+  setCaptionsOn: (on: boolean) => void
+  captionsSupported: boolean
 }
 
 const Ctx = createContext<CGContextValue | null>(null)
@@ -37,6 +54,120 @@ let layerSeq = 0
 export function CGProvider({ children }: { children: ReactNode }) {
   const [assets, setAssets] = useState<Record<string, CgAsset[]>>({})
   const [layers, setLayers] = useState<CgLayer[]>([])
+  const [nowPlaying, setNowPlayingState] = useState<NowPlaying>(() => {
+    try {
+      const raw = localStorage.getItem('nar-now-playing')
+      if (raw) {
+        const o = JSON.parse(raw)
+        if (typeof o?.track === 'string' && typeof o?.artist === 'string') return o
+      }
+    } catch { /* ignore */ }
+    return { track: '', artist: '' }
+  })
+  const setNowPlaying = useCallback((track: string, artist: string) => {
+    const next = { track, artist }
+    setNowPlayingState(next)
+    try { localStorage.setItem('nar-now-playing', JSON.stringify(next)) } catch { /* ignore */ }
+  }, [])
+
+  // Optional auto-poller — operator can point at the station's now-playing
+  // endpoint (Icecast status-json, custom JSON, or plain "Artist - Track" text).
+  // Errors are silent; manual entry keeps working.
+  const [nowPlayingUrl, setNowPlayingUrlState] = useState(() => localStorage.getItem('nar-now-playing-url') || '')
+  const setNowPlayingUrl = useCallback((url: string) => {
+    setNowPlayingUrlState(url)
+    try { localStorage.setItem('nar-now-playing-url', url) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    if (!nowPlayingUrl) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const poll = async () => {
+      try {
+        const res = await fetch(nowPlayingUrl, { cache: 'no-store' })
+        if (cancelled || !res.ok) return
+        const ct = res.headers.get('content-type') || ''
+        let track = '', artist = ''
+        if (ct.includes('json')) {
+          const data: any = await res.json()
+          if (cancelled) return
+          track = data.track || data.title || data.song || data.now_playing?.title || ''
+          artist = data.artist || data.artist_name || data.now_playing?.artist || ''
+          // Icecast fallback — title field as "Artist - Track"
+          if (!track && data.icestats?.source) {
+            const src = Array.isArray(data.icestats.source) ? data.icestats.source[0] : data.icestats.source
+            const t = src.title || src.yp_currently_playing || ''
+            if (t.includes(' - ')) {
+              const parts = t.split(' - ')
+              artist = parts[0].trim()
+              track = parts.slice(1).join(' - ').trim()
+            } else if (t) {
+              track = t
+            }
+          }
+        } else {
+          const t = (await res.text()).trim()
+          if (cancelled) return
+          if (t.includes(' - ')) {
+            const parts = t.split(' - ')
+            artist = parts[0].trim()
+            track = parts.slice(1).join(' - ').trim()
+          } else {
+            track = t
+          }
+        }
+        if (!cancelled && (track || artist)) {
+          const next = { track, artist }
+          setNowPlayingState(next)
+          try { localStorage.setItem('nar-now-playing', JSON.stringify(next)) } catch { /* ignore */ }
+        }
+      } catch { /* network error — try again next tick */ }
+      finally {
+        if (!cancelled) timer = setTimeout(poll, 10000)
+      }
+    }
+    poll()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [nowPlayingUrl])
+
+  // Live captions via Web Speech Recognition (Chromium-only).
+  const [captionsOn, setCaptionsOn] = useState(false)
+  const [captionText, setCaptionText] = useState('')
+  useEffect(() => {
+    if (!captionsOn || !SPEECH_AVAILABLE) return
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const rec = new SR()
+    rec.continuous = true
+    rec.interimResults = true
+    rec.lang = 'en-GB'
+    let stoppedByUs = false
+    rec.onresult = (e: any) => {
+      let interim = ''
+      let final = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i]
+        if (r.isFinal) final += r[0].transcript
+        else interim += r[0].transcript
+      }
+      const next = (final || interim).trim()
+      if (next) setCaptionText(next)
+    }
+    rec.onerror = (e: any) => console.warn('[captions]', e.error)
+    // SpeechRecognition stops itself after a long silence — auto-restart.
+    rec.onend = () => {
+      if (!stoppedByUs) {
+        try { rec.start() } catch { /* might be too soon — leave to next mount */ }
+      }
+    }
+    try { rec.start() } catch (e) { console.warn('[captions] start failed:', e) }
+    return () => {
+      stoppedByUs = true
+      try { rec.stop() } catch { /* ignore */ }
+    }
+  }, [captionsOn])
   const layersRef = useRef<CgLayer[]>([])
   layersRef.current = layers
   const elements = useRef<Map<string, CgElement>>(new Map())
@@ -141,12 +272,16 @@ export function CGProvider({ children }: { children: ReactNode }) {
   const openFolder = useCallback((category?: string) => studio?.cgOpenFolder?.(category), [])
 
   return (
-    <Ctx.Provider value={{ assets, layers, elements, toggleLayer, toggleTitle, removeLayer, setOpacity, setBlend, raiseLayer, openFolder }}>
+    <Ctx.Provider value={{
+      assets, layers, elements, toggleLayer, toggleTitle, removeLayer, setOpacity, setBlend, raiseLayer, openFolder,
+      nowPlaying, setNowPlaying, nowPlayingUrl, setNowPlayingUrl,
+      captionText, captionsOn, setCaptionsOn, captionsSupported: SPEECH_AVAILABLE,
+    }}>
       {/* Off-screen layer elements — decoded/rendered here, drawn onto the program canvas. */}
       <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none' }} aria-hidden>
         {layers.map(layer => {
           if (layer.kind === 'title') {
-            return <TitleLayer key={layer.id} layer={layer} elements={elements} />
+            return <TitleLayer key={layer.id} layer={layer} elements={elements} nowPlaying={nowPlaying} captionText={captionText} />
           }
           if (layer.kind === 'video') {
             return (

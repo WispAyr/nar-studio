@@ -1,0 +1,31 @@
+# Unreal Engine generated folders — never commit these.
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio
+.vs/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# JetBrains Rider
+.idea/
+
+# Compiled C++ artifacts
+*.obj
+*.pdb
+*.dll
+*.exe
+*.lib
+
+# But DO commit:
+#   NarVisualizer.uproject
+#   Config/
+#   Source/
+#   README.md

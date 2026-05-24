@@ -8,6 +8,8 @@ import { schedulePoller } from './schedule'
 import { recordingManager } from './recording'
 import { builtinRecorder } from './builtinRecorder'
 import { builtinStreamer } from './builtinStreamer'
+import { complianceLogger } from './complianceLogger'
+import { unrealLauncher, registerUnrealLauncherEvents, bindUnrealLauncherShutdown } from './unrealLauncher'
 import { cgAssets } from './cgAssets'
 import { vizShaders } from './vizShaders'
 
@@ -80,6 +82,8 @@ app.whenReady().then(async () => {
   vizShaders.watch(() => mainWindow?.webContents.send('viz-shaders:changed'))
   // FFmpeg lost the RTMP link — tell the renderer so it can reconnect.
   builtinStreamer.on('ended', () => mainWindow?.webContents.send('stream:ended'))
+  // FFmpeg progress line — health widget consumes this at ~1 Hz.
+  builtinStreamer.on('stats', s => mainWindow?.webContents.send('stream:stats', s))
   // A recording file failed to write (disk full, permissions) — warn the operator.
   builtinRecorder.on('error', (msg: string) => mainWindow?.webContents.send('rec:error', msg))
   registerIpcHandlers(ipcMain)
@@ -89,6 +93,11 @@ app.whenReady().then(async () => {
   hidManager.start()
   schedulePoller.start()
   recordingManager.init()
+  complianceLogger.startBackgroundSweep()
+  registerUnrealLauncherEvents(status => mainWindow?.webContents.send('unreal:status', status))
+  bindUnrealLauncherShutdown()
+  // Optional auto-launch — only fires if the operator opted in.
+  unrealLauncher.bootIfRequested()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -98,6 +107,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', async () => {
   await recordingManager.stopAll()
   builtinRecorder.stopAll()
+  complianceLogger.stopAll()
   hidManager.stop()
   schedulePoller.stop()
   if (process.platform !== 'darwin') app.quit()

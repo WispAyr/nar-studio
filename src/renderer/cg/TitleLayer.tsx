@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { useSchedule } from '../hooks/useSchedule'
 import { useViz } from '../viz/VizProvider'
-import { drawTitle, drawSparkle, type TitleData, type TitleRect } from './titles'
+import { drawTitle, drawSparkle, cgAssetsReady, type TitleData, type TitleRect } from './titles'
 import type { CgLayer } from './types'
 
 type ElementMap = Map<string, HTMLImageElement | HTMLVideoElement | HTMLCanvasElement>
@@ -9,6 +9,8 @@ type ElementMap = Map<string, HTMLImageElement | HTMLVideoElement | HTMLCanvasEl
 interface Props {
   layer: CgLayer
   elements: MutableRefObject<ElementMap>
+  nowPlaying: { track: string; artist: string }
+  captionText: string
 }
 
 function fmtTime(iso: string): string {
@@ -24,7 +26,7 @@ function fmtTime(iso: string): string {
  * compositor draws over the program. The static title is cached in a base
  * canvas; a per-frame loop composites it with a subtle audio-reactive sheen.
  */
-export function TitleLayer({ layer, elements }: Props) {
+export function TitleLayer({ layer, elements, nowPlaying, captionText }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const baseRef = useRef<HTMLCanvasElement | null>(null)
   if (!baseRef.current) {
@@ -65,12 +67,17 @@ export function TitleLayer({ layer, elements }: Props) {
       clock: new Date(now).toLocaleTimeString('en-GB', {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
       }),
+      track: nowPlaying.track,
+      artist: nowPlaying.artist,
+      captionText,
     }
     const render = () => { rectRef.current = drawTitle(base, layer.template!, data) }
     render()
     // Poppins may load after first paint — redraw once the font is ready.
     document.fonts?.ready.then(render).catch(() => {})
-  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now])
+    // The embedded NAR logo decodes asynchronously — redraw when it's ready.
+    cgAssetsReady.then(render).catch(() => {})
+  }, [layer.template, schedule.current, schedule.next, schedule.presenter, now, nowPlaying.track, nowPlaying.artist, captionText])
 
   // Per-frame: composite the cached title + a subtle audio-reactive sheen.
   useEffect(() => {
@@ -88,7 +95,7 @@ export function TitleLayer({ layer, elements }: Props) {
       const rect = rectRef.current
       if (rect) {
         const lv = vizRef.current.levelsRef.current
-        drawSparkle(ctx, rect, (performance.now() - start) / 1000, lv.treble, lv.beat)
+        drawSparkle(ctx, rect, (performance.now() - start) / 1000, lv.treble, lv.beat, lv.bpm, lv.bpmConfident)
       }
     }
     raf = requestAnimationFrame(tick)

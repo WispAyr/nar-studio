@@ -47,11 +47,11 @@ const DEFAULT_CAMERAS: CamPlacement[] = [
   { x: 0.94, y: 0.62, angle: Math.PI },
 ]
 
-const CAM_COLOURS = ['#e8003c', '#f59e0b', '#22c55e', '#5b8dff']
-const ZONE_PALETTE = ['#e8003c', '#7c5cff', '#22c55e', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16', '#64748b']
+const CAM_COLOURS = ['#e5202b', '#f7931e', '#22c55e', '#5b8dff']
+const ZONE_PALETTE = ['#e5202b', '#7c5cff', '#22c55e', '#f7931e', '#06b6d4', '#ec4899', '#84cc16', '#64748b']
 
 const DEFAULT_ZONES: Zone[] = [
-  { id: 'presenter', label: 'Presenter', x: 0.50, y: 0.40, r: 0.11, color: '#e8003c' },
+  { id: 'presenter', label: 'Presenter', x: 0.50, y: 0.40, r: 0.11, color: '#e5202b' },
   { id: 'cohost', label: 'Co-host', x: 0.28, y: 0.56, r: 0.10, color: '#7c5cff' },
   { id: 'guest', label: 'Guest', x: 0.72, y: 0.56, r: 0.10, color: '#22c55e' },
   { id: 'producer', label: 'Producer', x: 0.50, y: 0.84, r: 0.09, color: '#64748b' },

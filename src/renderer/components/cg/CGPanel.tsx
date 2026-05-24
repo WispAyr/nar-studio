@@ -103,6 +103,64 @@ export function CGPanel() {
         </div>
       </div>
 
+      {/* Now Playing inputs — drive the Now Playing title template */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">Now Playing · text</span>
+        <input
+          type="text"
+          placeholder="Track title"
+          value={cg.nowPlaying.track}
+          onChange={e => cg.setNowPlaying(e.target.value, cg.nowPlaying.artist)}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-blue/60"
+        />
+        <input
+          type="text"
+          placeholder="Artist"
+          value={cg.nowPlaying.artist}
+          onChange={e => cg.setNowPlaying(cg.nowPlaying.track, e.target.value)}
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-nar-blue/60"
+        />
+        <input
+          type="url"
+          placeholder="Auto-poll URL (Icecast / custom JSON / Artist - Track text)"
+          value={cg.nowPlayingUrl}
+          onChange={e => cg.setNowPlayingUrl(e.target.value)}
+          title="Optional — points at a station endpoint that returns track metadata. Polled every 10s. Empty for manual entry."
+          className="bg-surface-800 border border-surface-700 rounded px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-nar-blue/60"
+        />
+        {cg.nowPlayingUrl && (
+          <span className="text-[10px] text-slate-600 italic">Auto-polling every 10s</span>
+        )}
+      </div>
+
+      {/* Live captions — Web Speech recognition feeding the Captions title */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-slate-600 uppercase tracking-wider">Captions · live ASR</span>
+        <button
+          onClick={() => cg.setCaptionsOn(!cg.captionsOn)}
+          disabled={!cg.captionsSupported}
+          title={
+            cg.captionsSupported
+              ? 'Toggle live Web Speech captions. Add the "Captions" title to show them on air.'
+              : 'Speech recognition is not available in this build'
+          }
+          className={`text-xs px-2 py-1.5 rounded font-bold uppercase tracking-wider transition-colors ${
+            !cg.captionsSupported
+              ? 'bg-surface-800 text-slate-700 cursor-not-allowed'
+              : cg.captionsOn
+              ? 'bg-nar-red text-white animate-pulse'
+              : 'bg-surface-800 text-slate-400 hover:text-white hover:bg-surface-700'
+          }`}
+        >
+          {!cg.captionsSupported ? 'Captions · unsupported' : cg.captionsOn ? '● Captions LIVE' : 'Captions · OFF'}
+        </button>
+        {cg.captionsOn && (
+          <div className="text-[10px] text-slate-500 italic truncate" title={cg.captionText}>
+            {cg.captionText ? `“${cg.captionText.slice(-80)}”` : 'listening…'}
+          </div>
+        )}
+      </div>
+
       {/* Asset library, by category */}
       {Object.entries(cg.assets).map(([category, items]) => {
         const isRoll = ROLL_CATEGORIES.includes(category)
