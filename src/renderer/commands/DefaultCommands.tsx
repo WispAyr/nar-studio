@@ -216,6 +216,13 @@ export function DefaultCommands() {
       run: () => studio?.popoutOpen?.('multiview'),
     })
     add({
+      id: 'popout.producer',
+      label: 'Pop Out Producer Deck',
+      hint: 'Show clock + Now/Next on a second screen',
+      group: 'Windows',
+      run: () => studio?.popoutOpen?.('producer'),
+    })
+    add({
       id: 'popout.close-all',
       label: 'Close All Popouts',
       group: 'Windows',

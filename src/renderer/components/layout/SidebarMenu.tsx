@@ -73,6 +73,7 @@ export function SidebarMenu({ onOpenColour, onOpenStreamDeck, onOpenStudio }: Pr
           <MenuGroup label="Pop-out Windows">
             <MenuItem onClick={run(() => studio.popoutOpen('program'))} label="Program Monitor" hint="full-screen on display 2" />
             <MenuItem onClick={run(() => studio.popoutOpen('multiview'))} label="Multiview" hint="2×2 on display 2" />
+            <MenuItem onClick={run(() => studio.popoutOpen('producer'))} label="Producer Deck" hint="Show clock + Now/Next" />
             <MenuItem onClick={run(() => studio.popoutCloseAll())} label="Close All Pop-outs" hint="" />
           </MenuGroup>
           <MenuGroup label="Settings">

@@ -19,7 +19,19 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useRundown, type RundownRow } from '../../rundown/RundownProvider'
-import { MYRIAD_COLORS, MYRIAD_LABELS, rundownTypeToMyriad } from '../common/itemTypeColors'
+import { useScheduledFires } from '../../schedules/ScheduledFiresProvider'
+import { MYRIAD_COLORS, MYRIAD_LABELS, type MyriadItemType, rundownTypeToMyriad } from '../common/itemTypeColors'
+import type { TitleTemplate } from '../../cg/types'
+
+function templateToMyriadInner(t: TitleTemplate): MyriadItemType {
+  if (t === 'news-banner') return 'news'
+  if (t === 'travel-banner') return 'travel'
+  if (t === 'sponsor') return 'sponsor'
+  if (t === 'be-right-back' || t === 'stand-by') return 'jingle'
+  if (t === 'now-on-air' || t === 'coming-up') return 'show'
+  if (t === 'music-sweeper') return 'sweeper'
+  return 'other'
+}
 
 interface Props {
   /** Diameter in px. The dial scales every detail proportionally. */
@@ -49,12 +61,28 @@ function arcPath(cx: number, cy: number, rInner: number, rOuter: number, a0: num
 
 export function ShowClock({ size = 260 }: Props) {
   const r = useRundown()
+  const sched = useScheduledFires()
   // 1Hz heartbeat for the minute/second hands + "current row" pulse.
   const [, force] = useState(0)
   useEffect(() => {
     const id = setInterval(() => force(n => n + 1), 1000)
     return () => clearInterval(id)
   }, [])
+
+  // Scheduled-fire dots for the current hour — same data source as the
+  // ScheduleBanner's HourClock so the operator sees a consistent picture
+  // top-of-screen and inside the Show Clock view.
+  const scheduledDots = useMemo(() => {
+    const hour = new Date().getHours()
+    const hourBit = 1 << hour
+    return sched.rules
+      .filter(rule => rule.enabled && (rule.hourMask & hourBit))
+      .map(rule => ({
+        minuteOfHour: rule.minuteOfHour,
+        color: MYRIAD_COLORS[templateToMyriadInner(rule.template)].hex,
+        label: `:${rule.minuteOfHour.toString().padStart(2, '0')} ${rule.label}`,
+      }))
+  }, [sched.rules])
 
   // Segments: each row gets a slice proportional to its duration, packed
   // consecutively from the dial start (12 o'clock).
@@ -145,6 +173,20 @@ export function ShowClock({ size = 260 }: Props) {
             />
           )
         })()}
+
+        {/* Scheduled-fire dots — pinned to wall-clock minute positions
+            (independent of rundown progress), painted on the outer rim
+            above the segments so the operator sees "what's about to fire
+            this hour" alongside "what's the show shape". */}
+        {scheduledDots.map((dot, i) => {
+          const a = (dot.minuteOfHour / 60) * 360 - 90
+          const [x, y] = polar(rOuter + 3, a)
+          return (
+            <circle key={i} cx={x} cy={y} r={2.2} fill={dot.color} stroke="#0a0a14" strokeWidth={0.6}>
+              <title>{dot.label}</title>
+            </circle>
+          )
+        })}
 
         {/* Minute / quarter ticks */}
         {Array.from({ length: 60 }, (_, i) => {

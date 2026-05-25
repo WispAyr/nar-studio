@@ -12,7 +12,7 @@
 import { app, BrowserWindow, screen, type Display } from 'electron'
 import path from 'path'
 
-export type PopoutView = 'program' | 'multiview'
+export type PopoutView = 'program' | 'multiview' | 'producer'
 
 interface PopoutEntry {
   view: PopoutView

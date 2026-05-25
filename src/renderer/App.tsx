@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScheduleBanner } from './components/schedule/ScheduleBanner'
 import { AudioPanel } from './components/audio/AudioPanel'
 import { ProgramMonitor } from './components/program/ProgramMonitor'
@@ -50,6 +50,7 @@ import { MyriadBridgeProvider } from './myriad/MyriadBridgeProvider'
 import { MyriadActionBinder } from './myriad/MyriadActionBinder'
 import { PopoutHost } from './popout/PopoutHost'
 import { SidebarMenu } from './components/layout/SidebarMenu'
+import { Splitter, usePersistedSize } from './components/layout/Splitter'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown' | 'shows'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
@@ -159,82 +160,186 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
       {/* Audio strip — studio desk feed, not camera mics */}
       <AudioPanel />
 
-      {/* Main area */}
-      <div className="flex flex-1 min-h-0 gap-1 p-1">
-
-        {/* Left: program monitor + 2×2 multiview */}
-        <div className="flex-1 min-w-0 flex flex-col gap-1">
-          <div className="flex-[3] min-h-0">
-            <ProgramMonitor />
-          </div>
-          <div className="flex-[2] min-h-0">
-            <MultiviewGrid selectedCamera={selectedCamera} />
-          </div>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="w-72 flex flex-col gap-1 shrink-0">
-
-          {/* Compact ≡ menu — workspaces (Colour / Stream Deck / Studio Map),
-              pop-out windows, factory reset. Pulled out of the visible UI to
-              free vertical space for the things the operator touches per-minute
-              rather than per-show. */}
-          <SidebarMenu
-            onOpenColour={onOpenColour}
-            onOpenStreamDeck={onOpenStreamDeck}
-            onOpenStudio={onOpenStudio}
-          />
-
-          {/* Camera controls for selected camera */}
-          <div className="bg-surface-900 rounded border border-surface-700 shrink-0" style={{ height: '440px' }}>
-            <div className="flex items-center gap-2 px-3 pt-2 pb-1.5 border-b border-surface-700">
-              <div className="w-1.5 h-1.5 rounded-full bg-nar-red" />
-              <span className="text-xs font-bold text-slate-300">CAM {selectedCamera + 1}</span>
-              {/* Camera selector tabs */}
-              <div className="flex gap-1 ml-auto">
-                {[0, 1, 2, 3].map(i => (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedCamera(i)}
-                    className={`text-xs w-6 py-0.5 rounded transition-colors ${
-                      selectedCamera === i
-                        ? 'bg-nar-red text-white'
-                        : 'bg-surface-700 text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="h-[calc(100%-37px)]">
-              <CameraControls index={selectedCamera} />
-            </div>
-          </div>
-
-          {/* Now / Next stack — Myriad-style live playout deck. Always
-              visible when a rundown exists; folds itself away otherwise. */}
-          <NowNextStack />
-
-          {/* Global studio states — recall all camera positions at once */}
-          <StudioStates />
-
-          {/* Tabbed lower panel — grouped 2-row grid: top row is Production
-              (the things the operator manages every show), bottom row is I/O
-              (the things they configure once and rarely touch). Each row gets
-              a hairline group label so the relationship is scannable. */}
-          <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
-            <SidebarTabs
-              tab={rightTab}
-              onChange={setRightTab}
-            />
-          </div>
-        </div>
-      </div>
+      {/* Main area — resizable splits so the operator can give a panel more
+          room when they need it. Sidebar width + program/multiview split
+          both persist to localStorage. */}
+      <ResizableMain selectedCamera={selectedCamera}>
+        <SidebarBody
+          onOpenColour={onOpenColour}
+          onOpenStreamDeck={onOpenStreamDeck}
+          onOpenStudio={onOpenStudio}
+          selectedCamera={selectedCamera}
+          setSelectedCamera={setSelectedCamera}
+          rightTab={rightTab}
+          setRightTab={setRightTab}
+        />
+      </ResizableMain>
 
       {/* Bottom status bar */}
       <StatusBar />
     </div>
+  )
+}
+
+/**
+ * Two-axis resizable main area:
+ *   horizontal splitter: sidebar width (default 288px, range 240-560)
+ *   vertical splitter:   program monitor / multiview split (default 60% of left height)
+ *
+ * The right sidebar grows when the operator drags the vertical handle
+ * LEFT; we use `flex-row-reverse` so the sidebar is the first child and
+ * its width is the value Splitter controls directly. The left content
+ * fills the remainder.
+ */
+function ResizableMain({ selectedCamera, children }: {
+  selectedCamera: number
+  children: React.ReactNode
+}) {
+  const [sidebarPx, setSidebarPx] = usePersistedSize('nar-sidebar-w', 288, 240, 560)
+  // Drag-LEFT should GROW the sidebar (it's on the right). The Splitter
+  // reports `size + delta`; since "size" we pass is the sidebar width,
+  // the delta as captured (xMove - xDown) is opposite the desired
+  // direction — so we negate it via a small wrapper.
+  const [, setLastReported] = useState(sidebarPx)
+  const onSidebarSize = useCallback((rawNext: number) => {
+    // The wrapper assumes positive delta = sidebar grows. The Splitter
+    // sends `startSize + (clientX - startX)`. We want `startSize - (clientX - startX)`
+    // because dragging LEFT (negative delta) should grow the sidebar.
+    // Easiest fix: invert around startSize. We don't know startSize, so
+    // we instead compute the delta-from-current and apply it inverted.
+    // setLastReported keeps the last value to derive a delta.
+    setLastReported(prev => {
+      const delta = rawNext - prev
+      const next = Math.max(240, Math.min(560, sidebarPx - delta))
+      setSidebarPx(next)
+      return rawNext
+    })
+  }, [sidebarPx, setSidebarPx])
+
+  return (
+    <div className="flex flex-1 min-h-0 gap-1 p-1">
+      <LeftMainColumn selectedCamera={selectedCamera} />
+      <Splitter
+        axis="v"
+        size={sidebarPx}
+        min={240} max={560} defaultSize={288}
+        onSize={onSidebarSize}
+      />
+      <div className="flex flex-col gap-1 shrink-0" style={{ width: `${sidebarPx}px` }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/** Left main column with a draggable horizontal splitter between
+ *  program monitor and multiview. */
+function LeftMainColumn({ selectedCamera }: { selectedCamera: number }) {
+  const [pgmPx, setPgmPx] = usePersistedSize('nar-pgm-h', 0, 0, 9999)
+  const containerRef = useRef<HTMLDivElement>(null)
+  // Defer to flex-3/flex-2 until the operator drags. Once they drag, the
+  // pgm height is locked to pixels and the multiview takes the remainder.
+  const usePixel = pgmPx > 0
+  return (
+    <div ref={containerRef} className="flex-1 min-w-0 flex flex-col gap-1">
+      <div
+        className={usePixel ? 'min-h-0' : 'flex-[3] min-h-0'}
+        style={usePixel ? { height: `${pgmPx}px`, flex: 'none' } : undefined}
+      >
+        <ProgramMonitor />
+      </div>
+      <Splitter
+        axis="h"
+        size={pgmPx}
+        min={120} max={1600} defaultSize={0}
+        onSize={(n) => setPgmPx(n)}
+      />
+      <div className={usePixel ? 'flex-1 min-h-0' : 'flex-[2] min-h-0'}>
+        <MultiviewGrid selectedCamera={selectedCamera} />
+      </div>
+    </div>
+  )
+}
+
+/** The contents of the right sidebar — extracted so the resizable wrapper
+ *  doesn't need to know about its internals. */
+function SidebarBody({
+  onOpenColour, onOpenStreamDeck, onOpenStudio,
+  selectedCamera, setSelectedCamera,
+  rightTab, setRightTab,
+}: {
+  onOpenColour: () => void
+  onOpenStreamDeck: () => void
+  onOpenStudio: () => void
+  selectedCamera: number
+  setSelectedCamera: (i: number) => void
+  rightTab: RightTab
+  setRightTab: (t: RightTab) => void
+}) {
+  const [camOpen, setCamOpen] = useState<boolean>(() => localStorage.getItem('nar-cam-card-open') !== 'off')
+  const toggleCam = useCallback(() => {
+    const next = !camOpen
+    setCamOpen(next)
+    try { localStorage.setItem('nar-cam-card-open', next ? 'on' : 'off') } catch { /* ignore */ }
+  }, [camOpen])
+
+  return (
+    <>
+      {/* Compact ≡ menu — workspaces, pop-outs, factory reset */}
+      <SidebarMenu
+        onOpenColour={onOpenColour}
+        onOpenStreamDeck={onOpenStreamDeck}
+        onOpenStudio={onOpenStudio}
+      />
+
+      {/* Camera controls — collapses to header on chevron click so the
+          tab body + Now/Next + studio states get the full sidebar height
+          when the operator isn't flying a camera. */}
+      <div
+        className={`bg-surface-900 rounded border border-surface-700 shrink-0 overflow-hidden`}
+        style={{ height: camOpen ? 440 : 36 }}
+      >
+        <button
+          onClick={toggleCam}
+          className="w-full flex items-center gap-2 px-3 pt-2 pb-1.5 border-b border-surface-700 hover:bg-surface-800 transition-colors"
+        >
+          <div className="w-1.5 h-1.5 rounded-full bg-nar-red shrink-0" />
+          <span className="text-xs font-bold text-slate-300">CAM {selectedCamera + 1}</span>
+          <div className="flex gap-1 ml-auto" onClick={e => e.stopPropagation()}>
+            {[0, 1, 2, 3].map(i => (
+              <button
+                key={i}
+                onClick={() => setSelectedCamera(i)}
+                className={`text-xs w-6 py-0.5 rounded transition-colors ${
+                  selectedCamera === i
+                    ? 'bg-nar-red text-white'
+                    : 'bg-surface-700 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] text-slate-600 ml-1">{camOpen ? '▴' : '▾'}</span>
+        </button>
+        {camOpen && (
+          <div className="h-[calc(100%-37px)]">
+            <CameraControls index={selectedCamera} />
+          </div>
+        )}
+      </div>
+
+      {/* Now / Next stack — Myriad-style live playout deck */}
+      <NowNextStack />
+
+      {/* Global studio states */}
+      <StudioStates />
+
+      {/* Tabbed lower panel — Production / I/O grouped 2-row grid */}
+      <div className="flex-1 bg-surface-900 rounded border border-surface-700 flex flex-col min-h-0">
+        <SidebarTabs tab={rightTab} onChange={setRightTab} />
+      </div>
+    </>
   )
 }
 
