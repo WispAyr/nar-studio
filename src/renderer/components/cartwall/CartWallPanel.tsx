@@ -3,6 +3,20 @@ import {
   type DragEvent, type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { NAR_BRAND_COLORS, useCartwall, type CartSlot } from '../../cartwall/CartWallProvider'
+import {
+  MYRIAD_COLORS, MYRIAD_LABELS, type MyriadItemType,
+} from '../common/itemTypeColors'
+
+/**
+ * Item types that may be assigned to a cart-wall slot. Container types
+ * (`show`, `interview`, `ad-break`) are intentionally omitted — those are
+ * rundown-level concepts, whereas a cart slot is always a single leaf
+ * sting/spot.
+ */
+const CART_SLOT_TYPES: readonly MyriadItemType[] = [
+  'music', 'jingle', 'sweeper', 'voice-track', 'advert',
+  'sponsor', 'news', 'travel', 'weather', 'other',
+] as const
 
 /**
  * Modal cart wall — 4x4 grid of fire buttons.
@@ -135,6 +149,11 @@ function CartButton({ slot, ready, flashing, onFire, onAssign, onEdit }: CartBut
   }
 
   const isEmpty = !ready
+  // Loaded tiles take a faded tint of their Myriad type so a cart wall full of
+  // mixed-purpose stings reads at a glance ("the orange row is jingles, the
+  // amber row is adverts"). Empty tiles keep the neutral slate-dashed look so
+  // they remain visually subordinate to loaded carts.
+  const typeStyle = MYRIAD_COLORS[slot.type]
   return (
     <button
       type="button"
@@ -148,7 +167,7 @@ function CartButton({ slot, ready, flashing, onFire, onAssign, onEdit }: CartBut
         'border text-left transition-all duration-150',
         isEmpty
           ? 'border-dashed border-surface-600 bg-surface-800/60 hover:border-surface-500 hover:bg-surface-800'
-          : 'border-surface-600 bg-surface-800 hover:bg-surface-700',
+          : `border-surface-600 ${typeStyle.bgFaded} hover:brightness-125`,
         drag ? 'ring-2 ring-nar-blue ring-offset-2 ring-offset-surface-900' : '',
         flashing ? 'ring-2 ring-white' : '',
       ].join(' ')}
@@ -165,9 +184,9 @@ function CartButton({ slot, ready, flashing, onFire, onAssign, onEdit }: CartBut
         <div className="min-h-0 flex-1">
           {ready ? (
             <>
-              <div className="line-clamp-2 font-bold leading-tight text-white">{slot.label}</div>
+              <div className="line-clamp-2 pr-14 font-bold leading-tight text-white">{slot.label}</div>
               {slot.filePath && (
-                <div className="mt-1 truncate text-[10px] uppercase tracking-wider text-slate-500">
+                <div className="mt-1 truncate text-[10px] uppercase tracking-wider text-slate-300/70">
                   {slot.filePath}
                 </div>
               )}
@@ -201,6 +220,21 @@ function CartButton({ slot, ready, flashing, onFire, onAssign, onEdit }: CartBut
           )}
         </div>
       </div>
+
+      {/* Type chip — top-right corner, only on loaded slots. Solid fill of the
+          Myriad type colour so it pops against the faded tile background. */}
+      {ready && (
+        <span
+          aria-hidden
+          className={[
+            'pointer-events-none absolute right-1.5 top-1.5 rounded',
+            'px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider',
+            typeStyle.bg, typeStyle.text,
+          ].join(' ')}
+        >
+          {MYRIAD_LABELS[slot.type]}
+        </span>
+      )}
 
       <input
         ref={fileRef}
@@ -273,8 +307,10 @@ function SlotEditor({ slot, anchorX, anchorY, onClose }: SlotEditorProps) {
   }, [capturingKey, cw, slot.id])
 
   // Position: clamp to viewport with a 16px margin. The editor is ~280px wide.
+  // Height grew with the type picker — 380px keeps the popover fully on-screen
+  // even when anchored near the bottom edge.
   const style = useMemo<React.CSSProperties>(() => {
-    const W = 280, H = 260
+    const W = 280, H = 380
     const left = Math.min(Math.max(8, anchorX), window.innerWidth - W - 8)
     const top = Math.min(Math.max(8, anchorY), window.innerHeight - H - 8)
     return { left, top }
@@ -301,18 +337,54 @@ function SlotEditor({ slot, anchorX, anchorY, onClose }: SlotEditorProps) {
         </button>
       </div>
 
-      <label className="mb-2 block">
-        <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Label</span>
-        <input
-          type="text"
-          value={slot.label}
-          onChange={e => onLabelChange(e.target.value)}
-          className="w-full rounded border border-surface-600 bg-surface-900 px-2 py-1 text-sm text-white focus:border-nar-blue focus:outline-none"
-          maxLength={40}
-        />
-      </label>
+      <div className="mb-3">
+        <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Type</span>
+        <div className="grid grid-cols-4 gap-1">
+          {CART_SLOT_TYPES.map(t => {
+            const s = MYRIAD_COLORS[t]
+            const selected = slot.type === t
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => cw.setType(slot.id, t)}
+                aria-pressed={selected}
+                aria-label={`Set type ${MYRIAD_LABELS[t]}`}
+                className={[
+                  'rounded px-1 py-1 text-[9px] font-bold uppercase tracking-wider',
+                  'border transition-transform',
+                  selected
+                    ? `${s.bg} ${s.text} border-white scale-105`
+                    : `${s.bgFaded} ${s.textOnFaded} border-transparent hover:scale-105`,
+                ].join(' ')}
+              >
+                {MYRIAD_LABELS[t]}
+              </button>
+            )
+          })}
+        </div>
+      </div>
 
-      <div className="mb-2">
+      <div className="mb-3">
+        <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Colour</span>
+        <div className="flex flex-wrap gap-1.5">
+          {NAR_BRAND_COLORS.map(c => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => cw.setColor(slot.id, c)}
+              className={[
+                'h-6 w-6 rounded-full border-2 transition-transform',
+                slot.color === c ? 'scale-110 border-white' : 'border-transparent hover:scale-110',
+              ].join(' ')}
+              style={{ background: c }}
+              aria-label={`Set colour ${c}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-3">
         <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Hotkey</span>
         <div className="flex items-center gap-2">
           <button
@@ -339,24 +411,16 @@ function SlotEditor({ slot, anchorX, anchorY, onClose }: SlotEditorProps) {
         </div>
       </div>
 
-      <div className="mb-3">
-        <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Colour</span>
-        <div className="flex flex-wrap gap-1.5">
-          {NAR_BRAND_COLORS.map(c => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => cw.setColor(slot.id, c)}
-              className={[
-                'h-6 w-6 rounded-full border-2 transition-transform',
-                slot.color === c ? 'scale-110 border-white' : 'border-transparent hover:scale-110',
-              ].join(' ')}
-              style={{ background: c }}
-              aria-label={`Set colour ${c}`}
-            />
-          ))}
-        </div>
-      </div>
+      <label className="mb-3 block">
+        <span className="mb-1 block text-[10px] uppercase tracking-widest text-slate-500">Label</span>
+        <input
+          type="text"
+          value={slot.label}
+          onChange={e => onLabelChange(e.target.value)}
+          className="w-full rounded border border-surface-600 bg-surface-900 px-2 py-1 text-sm text-white focus:border-nar-blue focus:outline-none"
+          maxLength={40}
+        />
+      </label>
 
       <button
         type="button"

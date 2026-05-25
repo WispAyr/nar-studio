@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react'
+import type { MyriadItemType } from '../components/common/itemTypeColors'
 
 /**
  * Cart wall / sting deck.
@@ -52,10 +53,17 @@ export interface CartSlot {
   /** Single-key shortcut, e.g. "1", "q", "F1". Case-insensitive. */
   hotkey: string | null
   color: string
+  /**
+   * Myriad item type — drives the tile's faded background tint and the type
+   * chip in the editor. Mirrors Myriad Playout's vocabulary so operators get
+   * the same colour cues across systems. Defaults to `'jingle'` (the most
+   * common cart-wall occupant).
+   */
+  type: MyriadItemType
 }
 
 /** Persisted view of a slot — everything except runtime audio buffers. */
-type PersistedSlot = Pick<CartSlot, 'id' | 'label' | 'filePath' | 'hotkey' | 'color'>
+type PersistedSlot = Pick<CartSlot, 'id' | 'label' | 'filePath' | 'hotkey' | 'color' | 'type'>
 
 interface CartWallCtx {
   slots: CartSlot[]
@@ -75,6 +83,7 @@ interface CartWallCtx {
   setLabel: (id: string, label: string) => void
   setHotkey: (id: string, key: string | null) => void
   setColor: (id: string, color: string) => void
+  setType: (id: string, type: MyriadItemType) => void
   /** Underlying audio output node — connect to the broadcast chain. */
   getOutputNode: () => AudioNode | null
   /** MediaStream tap of the output, suitable for cross-context wiring. */
@@ -85,6 +94,19 @@ interface CartWallCtx {
 
 const Ctx = createContext<CartWallCtx | null>(null)
 
+/** Default type for newly-created or freshly-migrated slots. Jingles are the
+ * most common cart-wall occupant on every station we've shipped to. */
+const DEFAULT_SLOT_TYPE: MyriadItemType = 'jingle'
+
+/** Item types that may legally appear on a cart slot. Container types
+ * (show / interview / ad-break) are excluded — those are rundown-level
+ * concepts, not single-fire stings. Kept here as a runtime guard for the
+ * localStorage migration path. */
+const ALLOWED_SLOT_TYPES: ReadonlySet<MyriadItemType> = new Set<MyriadItemType>([
+  'music', 'jingle', 'sweeper', 'voice-track', 'advert',
+  'sponsor', 'news', 'travel', 'weather', 'other',
+])
+
 function defaultSlots(): CartSlot[] {
   return Array.from({ length: SLOT_COUNT }, (_, i) => ({
     id: `slot-${i}`,
@@ -92,6 +114,7 @@ function defaultSlots(): CartSlot[] {
     filePath: null,
     hotkey: null,
     color: NAR_BRAND_COLORS[i % NAR_BRAND_COLORS.length],
+    type: DEFAULT_SLOT_TYPE,
   }))
 }
 
@@ -107,12 +130,23 @@ function loadSlots(): CartSlot[] {
     for (let i = 0; i < base.length; i++) {
       const p = parsed[i]
       if (!p) continue
+      // Migration: pre-type-field saves won't have `type`. Default those to
+      // jingle so an upgrade doesn't lose carts. Anything that does have a
+      // type is validated against the allow-list — Myriad container types
+      // (show / interview / ad-break) get coerced to the default since they
+      // don't make sense on a single cart slot.
+      const persistedType = p.type
+      const validType: MyriadItemType =
+        typeof persistedType === 'string' && ALLOWED_SLOT_TYPES.has(persistedType as MyriadItemType)
+          ? persistedType as MyriadItemType
+          : DEFAULT_SLOT_TYPE
       base[i] = {
         ...base[i],
         label: typeof p.label === 'string' ? p.label : base[i].label,
         filePath: typeof p.filePath === 'string' ? p.filePath : null,
         hotkey: typeof p.hotkey === 'string' && p.hotkey.length > 0 ? p.hotkey : null,
         color: typeof p.color === 'string' ? p.color : base[i].color,
+        type: validType,
       }
     }
     return base
@@ -124,7 +158,7 @@ function loadSlots(): CartSlot[] {
 function saveSlots(slots: CartSlot[]) {
   try {
     const persisted: PersistedSlot[] = slots.map(s => ({
-      id: s.id, label: s.label, filePath: s.filePath, hotkey: s.hotkey, color: s.color,
+      id: s.id, label: s.label, filePath: s.filePath, hotkey: s.hotkey, color: s.color, type: s.type,
     }))
     localStorage.setItem(LS_KEY, JSON.stringify(persisted))
   } catch { /* quota / disabled — non-fatal */ }
@@ -303,6 +337,10 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
     setSlots(prev => prev.map(s => s.id === id ? { ...s, color } : s))
   }, [])
 
+  const setType = useCallback((id: string, type: MyriadItemType) => {
+    setSlots(prev => prev.map(s => s.id === id ? { ...s, type } : s))
+  }, [])
+
   // Global keyboard handler. Skips when typing into form fields, otherwise
   // matches the pressed key against any slot hotkey (case-insensitive for
   // printables, exact for F-keys).
@@ -349,12 +387,12 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
   const value = useMemo<CartWallCtx>(() => ({
     slots, flashing, ready,
     fire, fireByName, assign, clear,
-    setLabel, setHotkey, setColor,
+    setLabel, setHotkey, setColor, setType,
     getOutputNode, getOutputStream, getAudioContext,
   }), [
     slots, flashing, ready,
     fire, fireByName, assign, clear,
-    setLabel, setHotkey, setColor,
+    setLabel, setHotkey, setColor, setType,
     getOutputNode, getOutputStream, getAudioContext,
   ])
 

@@ -43,6 +43,7 @@ import { BumperLibraryProvider } from './bumpers/BumperLibraryProvider'
 import { ScheduledFiresProvider } from './schedules/ScheduledFiresProvider'
 import { RundownProvider } from './rundown/RundownProvider'
 import { RundownTab } from './components/rundown/RundownTab'
+import { NowNextStack } from './components/rundown/NowNextStack'
 import { ShowsProvider } from './shows/ShowsProvider'
 import { ShowsPanel } from './components/shows/ShowsPanel'
 import { MyriadBridgeProvider } from './myriad/MyriadBridgeProvider'
@@ -210,6 +211,10 @@ function AppInner({ onOpenColour, onOpenStreamDeck, onOpenStudio }: {
               <CameraControls index={selectedCamera} />
             </div>
           </div>
+
+          {/* Now / Next stack — Myriad-style live playout deck. Always
+              visible when a rundown exists; folds itself away otherwise. */}
+          <NowNextStack />
 
           {/* Global studio states — recall all camera positions at once */}
           <StudioStates />

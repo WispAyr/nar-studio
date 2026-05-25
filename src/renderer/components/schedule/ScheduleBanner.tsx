@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSchedule } from '../../hooks/useSchedule'
 import { useViz } from '../../viz/VizProvider'
 import { NAR_LOGO_DATA_URI } from '../../cg/narLogo'
 import { HourClock, type HourClockEvent } from '../common/HourClock'
-import { MYRIAD_COLORS } from '../common/itemTypeColors'
+import { MYRIAD_COLORS, type MyriadItemType } from '../common/itemTypeColors'
+import { useScheduledFires } from '../../schedules/ScheduledFiresProvider'
+import type { TitleTemplate } from '../../cg/types'
 
 function PaceIndicator() {
   const { levelsRef, audioActive } = useViz()
@@ -65,23 +67,71 @@ function WallClock() {
 }
 
 /**
- * Default hour-clock event markers — Myriad-style fixed-time hour landmarks
- * NAR runs every show (news on the hour, travel quarter-past). Wired into
- * the HourClock dial so the operator's eye anchors on familiar positions
- * even when the dial is otherwise idle.
- *
- * Future: derive these from active ScheduledFires rules so the dial shows
- * exactly what's about to fire on this hour rather than the canonical list.
+ * Map a CG title template to a Myriad item-type colour so the HourClock
+ * dot tint reflects what the scheduled rule will actually fire.
  */
-const HOUR_LANDMARKS: HourClockEvent[] = [
-  { minuteOfHour: 0,  color: MYRIAD_COLORS.news.hex,    label: ':00 News' },
-  { minuteOfHour: 15, color: MYRIAD_COLORS.travel.hex,  label: ':15 Travel' },
-  { minuteOfHour: 30, color: MYRIAD_COLORS.news.hex,    label: ':30 News' },
-  { minuteOfHour: 45, color: MYRIAD_COLORS.travel.hex,  label: ':45 Travel' },
+function templateToMyriad(t: TitleTemplate): MyriadItemType {
+  if (t === 'news-banner') return 'news'
+  if (t === 'travel-banner') return 'travel'
+  if (t === 'sponsor') return 'sponsor'
+  if (t === 'be-right-back' || t === 'stand-by') return 'jingle'
+  if (t === 'now-on-air' || t === 'coming-up') return 'show'
+  if (t === 'music-sweeper') return 'sweeper'
+  if (t === 'technical-difficulty') return 'other'
+  return 'other'
+}
+
+/**
+ * Canonical landmarks — shown when the operator has no active ScheduledFires.
+ * Mirrors NAR's habit (news on the hour + half, travel quarter-past + to).
+ */
+const FALLBACK_LANDMARKS: HourClockEvent[] = [
+  { minuteOfHour: 0,  color: MYRIAD_COLORS.news.hex,    label: ':00 News (suggested)' },
+  { minuteOfHour: 15, color: MYRIAD_COLORS.travel.hex,  label: ':15 Travel (suggested)' },
+  { minuteOfHour: 30, color: MYRIAD_COLORS.news.hex,    label: ':30 News (suggested)' },
+  { minuteOfHour: 45, color: MYRIAD_COLORS.travel.hex,  label: ':45 Travel (suggested)' },
 ]
+
+/**
+ * Derive the HourClock dots from the operator's active ScheduledFires for
+ * the current hour. Falls back to the canonical NAR landmarks if no rules
+ * are enabled this hour — so the dial is never empty + always reads as a
+ * NAR clock.
+ */
+function useHourEvents(): HourClockEvent[] {
+  const { rules } = useScheduledFires()
+  const [hour, setHour] = useState(() => new Date().getHours())
+  useEffect(() => {
+    // Poll hour at 30s — cheap, and we don't need sub-minute precision; the
+    // dot set only changes at the hour boundary.
+    const id = setInterval(() => setHour(new Date().getHours()), 30000)
+    return () => clearInterval(id)
+  }, [])
+
+  const events = useMemo(() => {
+    const out: HourClockEvent[] = []
+    const hourBit = 1 << hour
+    for (const r of rules) {
+      if (!r.enabled) continue
+      if (!(r.hourMask & hourBit)) continue
+      const m = templateToMyriad(r.template)
+      out.push({
+        minuteOfHour: r.minuteOfHour,
+        color: MYRIAD_COLORS[m].hex,
+        label: `:${r.minuteOfHour.toString().padStart(2, '0')} ${r.label}`,
+      })
+    }
+    // Sort by minute so the dial paints the dots in the order an operator
+    // would read them clockwise.
+    out.sort((a, b) => a.minuteOfHour - b.minuteOfHour)
+    return out.length > 0 ? out : FALLBACK_LANDMARKS
+  }, [rules, hour])
+  return events
+}
 
 export function ScheduleBanner() {
   const { current, next, nextIn, progress, stale } = useSchedule()
+  const hourEvents = useHourEvents()
 
   return (
     <div className="flex items-center gap-3 px-3 h-12 bg-surface-900 border-b border-surface-700 shrink-0">
@@ -90,9 +140,11 @@ export function ScheduleBanner() {
         <img src={NAR_LOGO_DATA_URI} alt="Now Ayrshire Radio" className="h-7 w-auto" />
       </div>
 
-      {/* Hour clock — iconic Myriad dial with NAR-hour landmarks */}
+      {/* Hour clock — iconic Myriad dial; dots driven by enabled
+          ScheduledFires for the current hour (falls back to NAR's
+          canonical news / travel landmarks when no rules are active). */}
       <div className="flex items-center gap-2 shrink-0">
-        <HourClock size={40} events={HOUR_LANDMARKS} />
+        <HourClock size={40} events={hourEvents} />
         <div className="flex flex-col leading-none">
           <span className="text-[9px] text-slate-600 uppercase tracking-wider">Hour</span>
           <span className="text-[10px] text-slate-400 font-bold tabular-nums">
