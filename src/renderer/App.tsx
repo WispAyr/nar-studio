@@ -51,12 +51,16 @@ import { MyriadActionBinder } from './myriad/MyriadActionBinder'
 import { PopoutHost } from './popout/PopoutHost'
 import { SidebarMenu } from './components/layout/SidebarMenu'
 import { Splitter, usePersistedSize } from './components/layout/Splitter'
+import { useLayoutMode } from './components/layout/useLayoutMode'
+import { ShowClock } from './components/rundown/ShowClock'
+import { DensityProvider } from './density/DensityProvider'
 
 type RightTab = 'router' | 'stream' | 'recording' | 'cg' | 'viz' | 'director' | 'rundown' | 'shows'
 type View = 'switcher' | 'colour' | 'streamdeck' | 'studio'
 
 export default function App() {
   return (
+    <DensityProvider>
     <CameraStreamProvider>
       <SceneAnalysisProvider>
         <RecognitionProvider>
@@ -117,6 +121,7 @@ export default function App() {
         </RecognitionProvider>
       </SceneAnalysisProvider>
     </CameraStreamProvider>
+    </DensityProvider>
   )
 }
 
@@ -195,30 +200,40 @@ function ResizableMain({ selectedCamera, children }: {
   selectedCamera: number
   children: React.ReactNode
 }) {
+  const { mode } = useLayoutMode()
   const [sidebarPx, setSidebarPx] = usePersistedSize('nar-sidebar-w', 288, 240, 560)
+  const [middlePx, setMiddlePx] = usePersistedSize('nar-middle-w', 360, 280, 560)
   // Drag-LEFT should GROW the sidebar (it's on the right). The Splitter
-  // reports `size + delta`; since "size" we pass is the sidebar width,
-  // the delta as captured (xMove - xDown) is opposite the desired
-  // direction — so we negate it via a small wrapper.
-  const [, setLastReported] = useState(sidebarPx)
+  // reports `size + delta`; we negate via a delta-from-prev wrapper.
+  const [, setLastSidebar] = useState(sidebarPx)
   const onSidebarSize = useCallback((rawNext: number) => {
-    // The wrapper assumes positive delta = sidebar grows. The Splitter
-    // sends `startSize + (clientX - startX)`. We want `startSize - (clientX - startX)`
-    // because dragging LEFT (negative delta) should grow the sidebar.
-    // Easiest fix: invert around startSize. We don't know startSize, so
-    // we instead compute the delta-from-current and apply it inverted.
-    // setLastReported keeps the last value to derive a delta.
-    setLastReported(prev => {
+    setLastSidebar(prev => {
       const delta = rawNext - prev
       const next = Math.max(240, Math.min(560, sidebarPx - delta))
       setSidebarPx(next)
       return rawNext
     })
   }, [sidebarPx, setSidebarPx])
+  // Middle-column splitter: drag-RIGHT grows the middle (left sibling).
+  // Splitter's positive delta = grow, so this one passes through directly.
+  const onMiddleSize = useCallback((rawNext: number) => {
+    setMiddlePx(Math.max(280, Math.min(560, rawNext)))
+  }, [setMiddlePx])
 
   return (
     <div className="flex flex-1 min-h-0 gap-1 p-1">
       <LeftMainColumn selectedCamera={selectedCamera} />
+      {mode === 'three-col' && (
+        <>
+          <Splitter
+            axis="v"
+            size={middlePx}
+            min={280} max={560} defaultSize={360}
+            onSize={onMiddleSize}
+          />
+          <MiddleProducerColumn width={middlePx} />
+        </>
+      )}
       <Splitter
         axis="v"
         size={sidebarPx}
@@ -228,6 +243,25 @@ function ResizableMain({ selectedCamera, children }: {
       <div className="flex flex-col gap-1 shrink-0" style={{ width: `${sidebarPx}px` }}>
         {children}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Middle producer column — only mounted in three-col layout mode. Houses
+ * the Show Clock at the top (large, ~size=middlePx-40) and the Now/Next
+ * stack underneath. Pure presentation; both children read live state
+ * from RundownProvider / ScheduledFiresProvider directly.
+ */
+function MiddleProducerColumn({ width }: { width: number }) {
+  return (
+    <div className="flex flex-col gap-2 shrink-0 bg-surface-900 rounded border border-surface-700 p-3 overflow-auto" style={{ width: `${width}px` }}>
+      <div className="text-[10px] text-slate-600 uppercase tracking-wider font-bold">Producer Deck</div>
+      <div className="flex items-center justify-center">
+        <ShowClock size={Math.min(width - 56, 320)} />
+      </div>
+      <div className="h-px bg-surface-800" />
+      <NowNextStack header={null} />
     </div>
   )
 }

@@ -12,6 +12,8 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { resetAllSettings } from '../../settings/resetSettings'
+import { useDensity } from '../../density/DensityProvider'
+import { useLayoutMode } from './useLayoutMode'
 
 const studio = (window as any).studio as {
   popoutOpen: (view: string) => Promise<unknown>
@@ -27,6 +29,8 @@ interface Props {
 export function SidebarMenu({ onOpenColour, onOpenStreamDeck, onOpenStudio }: Props) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const { compact, toggleCompact } = useDensity()
+  const { mode: layoutMode, toggle: toggleLayout } = useLayoutMode()
 
   // Close on click-outside / Escape.
   useEffect(() => {
@@ -77,6 +81,16 @@ export function SidebarMenu({ onOpenColour, onOpenStreamDeck, onOpenStudio }: Pr
             <MenuItem onClick={run(() => studio.popoutCloseAll())} label="Close All Pop-outs" hint="" />
           </MenuGroup>
           <MenuGroup label="Settings">
+            <MenuItem
+              onClick={run(() => toggleLayout())}
+              label={layoutMode === 'three-col' ? 'Layout · 3 columns' : 'Layout · 2 columns'}
+              hint="middle producer column"
+            />
+            <MenuItem
+              onClick={run(() => toggleCompact())}
+              label={compact ? 'Compact Density · ON' : 'Compact Density · OFF'}
+              hint="shrink paddings + font sizes"
+            />
             <MenuItem
               onClick={run(async () => {
                 if (window.confirm('Reset every persisted setting and reload the app?')) {

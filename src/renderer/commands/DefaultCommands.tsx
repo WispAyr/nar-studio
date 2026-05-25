@@ -18,6 +18,8 @@ import { useCG, TITLE_TEMPLATES } from '../cg/CGProvider'
 import { useRundown } from '../rundown/RundownProvider'
 import { useBumperLibrary } from '../bumpers/BumperLibraryProvider'
 import { resetAllSettings } from '../settings/resetSettings'
+import { useDensity } from '../density/DensityProvider'
+import { useLayoutMode } from '../components/layout/useLayoutMode'
 
 const studio = (window as any).studio
 
@@ -32,6 +34,8 @@ export function DefaultCommands() {
   const cg = useCG()
   const rundown = useRundown()
   const bumpers = useBumperLibrary()
+  const density = useDensity()
+  const layout = useLayoutMode()
 
   // We register a batch of commands on mount and unregister all on unmount,
   // so a hot-reload doesn't end up with stale handlers. Each registration's
@@ -311,6 +315,20 @@ export function DefaultCommands() {
 
     // ── Settings ───────────────────────────────────────────────────────────
     add({
+      id: 'settings.layout-toggle',
+      label: layout.mode === 'three-col' ? 'Layout · switch to 2 columns' : 'Layout · switch to 3 columns',
+      hint: 'middle producer column (ShowClock + Now/Next) between program + sidebar',
+      group: 'Settings',
+      run: () => layout.toggle(),
+    })
+    add({
+      id: 'settings.density-toggle',
+      label: density.compact ? 'Switch to Normal Density' : 'Switch to Compact Density',
+      hint: 'shrink paddings + font sizes across the app',
+      group: 'Settings',
+      run: () => density.toggleCompact(),
+    })
+    add({
       id: 'settings.reset-all',
       label: 'Reset All Settings (factory)',
       hint: 'Wipes persisted UI + main-side stores, reloads the app',
@@ -340,6 +358,8 @@ export function DefaultCommands() {
     compliance.status?.enabled,
     rundown.autoAdvance, rundown.rows.length,
     bumpers.bumpers.length, bumpers.isPlaying,
+    density, density.compact,
+    layout, layout.mode,
   ])
 
   return null

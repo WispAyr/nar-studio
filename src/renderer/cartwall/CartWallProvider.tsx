@@ -43,6 +43,7 @@ export const NAR_BRAND_COLORS = [
 ] as const
 
 const LS_KEY = 'nar-cartwall'
+const LS_KEY_GROUP = 'nar-cartwall-group'
 const SLOT_COUNT = 16
 
 export interface CartSlot {
@@ -84,6 +85,14 @@ interface CartWallCtx {
   setHotkey: (id: string, key: string | null) => void
   setColor: (id: string, color: string) => void
   setType: (id: string, type: MyriadItemType) => void
+  /**
+   * Operator view preference — when true, the panel renders slots grouped
+   * under per-type section headers instead of the raw 4×4 positional grid.
+   * Persisted so the choice survives reloads. The slot order itself never
+   * changes — this is purely a render-time reorder.
+   */
+  groupByType: boolean
+  setGroupByType: (on: boolean) => void
   /** Underlying audio output node — connect to the broadcast chain. */
   getOutputNode: () => AudioNode | null
   /** MediaStream tap of the output, suitable for cross-context wiring. */
@@ -164,6 +173,18 @@ function saveSlots(slots: CartSlot[]) {
   } catch { /* quota / disabled — non-fatal */ }
 }
 
+/** Restore the operator's grouping preference. Stored as a literal `'on'`
+ * string so the absence of the key — or any other value — falls back to the
+ * default (grid mode). Wrapped in try/catch so a disabled localStorage just
+ * yields the default rather than throwing on mount. */
+function loadGroupByType(): boolean {
+  try {
+    return localStorage.getItem(LS_KEY_GROUP) === 'on'
+  } catch {
+    return false
+  }
+}
+
 function normaliseHotkey(key: string): string {
   // Function keys keep their case ("F1"); printable keys collapse to lower.
   if (/^F\d+$/i.test(key)) return key.toUpperCase()
@@ -174,6 +195,7 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
   const [slots, setSlots] = useState<CartSlot[]>(loadSlots)
   const [flashing, setFlashing] = useState<Set<string>>(() => new Set())
   const [ready, setReady] = useState<Set<string>>(() => new Set())
+  const [groupByType, setGroupByTypeState] = useState<boolean>(loadGroupByType)
 
   // Lazy AudioContext + output GainNode + MediaStream tap. Built on first
   // fire so an idle cartwall doesn't hold an autoplay-blocked context open.
@@ -193,6 +215,17 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
 
   // Persist on every change. Cheap — JSON of 16 small objects.
   useEffect(() => { saveSlots(slots) }, [slots])
+
+  // Persist the grouping toggle. Same write-on-change pattern as the slots
+  // themselves so the choice survives reloads without explicit save calls.
+  useEffect(() => {
+    try { localStorage.setItem(LS_KEY_GROUP, groupByType ? 'on' : 'off') }
+    catch { /* quota / disabled — non-fatal */ }
+  }, [groupByType])
+
+  const setGroupByType = useCallback((on: boolean) => {
+    setGroupByTypeState(on)
+  }, [])
 
   const ensureContext = useCallback((): AudioContext => {
     let ctx = ctxRef.current
@@ -388,11 +421,13 @@ export function CartWallProvider({ children }: { children: ReactNode }) {
     slots, flashing, ready,
     fire, fireByName, assign, clear,
     setLabel, setHotkey, setColor, setType,
+    groupByType, setGroupByType,
     getOutputNode, getOutputStream, getAudioContext,
   }), [
     slots, flashing, ready,
     fire, fireByName, assign, clear,
     setLabel, setHotkey, setColor, setType,
+    groupByType, setGroupByType,
     getOutputNode, getOutputStream, getAudioContext,
   ])
 

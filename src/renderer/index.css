@@ -58,3 +58,24 @@ html, body, #root {
 .ptz-btn {
   @apply flex items-center justify-center w-8 h-8 rounded bg-surface-700 hover:bg-surface-600 active:bg-nar-red text-slate-300 hover:text-white transition-colors cursor-pointer select-none;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Compact density overrides.
+ *
+ * Active when `<html class="nar-density-compact">` is set by DensityProvider
+ * (toggle lives in SidebarMenu → Settings, and the Ctrl-K command palette).
+ * Deliberately blunt — we shrink the highest-frequency Tailwind padding /
+ * gap utilities the app uses (App.tsx, AudioPanel, SidebarMenu, ScheduleBanner)
+ * so the operator sees a uniform tighter layout without per-component work.
+ * ────────────────────────────────────────────────────────────────────────── */
+html.nar-density-compact { font-size: 11px; }
+html.nar-density-compact .px-4 { padding-left: 0.75rem; padding-right: 0.75rem; }
+html.nar-density-compact .px-3 { padding-left: 0.5rem; padding-right: 0.5rem; }
+html.nar-density-compact .py-2 { padding-top: 0.3rem; padding-bottom: 0.3rem; }
+html.nar-density-compact .py-1\.5 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+html.nar-density-compact .p-3 { padding: 0.5rem; }
+html.nar-density-compact .p-2 { padding: 0.3rem; }
+html.nar-density-compact .gap-3 { gap: 0.5rem; }
+html.nar-density-compact .gap-2 { gap: 0.375rem; }
+html.nar-density-compact .h-12 { height: 2.5rem; }
+html.nar-density-compact .text-xs { font-size: 11px; line-height: 14px; }

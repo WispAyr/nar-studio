@@ -5,6 +5,7 @@ import { NAR_LOGO_DATA_URI } from '../../cg/narLogo'
 import { HourClock, type HourClockEvent } from '../common/HourClock'
 import { MYRIAD_COLORS, type MyriadItemType } from '../common/itemTypeColors'
 import { useScheduledFires } from '../../schedules/ScheduledFiresProvider'
+import { useShows } from '../../shows/ShowsProvider'
 import type { TitleTemplate } from '../../cg/types'
 
 function PaceIndicator() {
@@ -100,6 +101,7 @@ const FALLBACK_LANDMARKS: HourClockEvent[] = [
  */
 function useHourEvents(): HourClockEvent[] {
   const { rules } = useScheduledFires()
+  const { currentShow } = useShows()
   const [hour, setHour] = useState(() => new Date().getHours())
   useEffect(() => {
     // Poll hour at 30s — cheap, and we don't need sub-minute precision; the
@@ -110,6 +112,7 @@ function useHourEvents(): HourClockEvent[] {
 
   const events = useMemo(() => {
     const out: HourClockEvent[] = []
+    // ─ Layer 1: enabled scheduled-fires for the current hour. Always shown.
     const hourBit = 1 << hour
     for (const r of rules) {
       if (!r.enabled) continue
@@ -121,11 +124,25 @@ function useHourEvents(): HourClockEvent[] {
         label: `:${r.minuteOfHour.toString().padStart(2, '0')} ${r.label}`,
       })
     }
+    // ─ Layer 2: per-show landmarks for the current show. These reflect the
+    // operator's own canonical hour shape and merge with the scheduled fires.
+    const showLandmarks = currentShow?.hourLandmarks ?? []
+    for (const l of showLandmarks) {
+      out.push({
+        minuteOfHour: l.minute,
+        color: MYRIAD_COLORS[l.type].hex,
+        label: `:${l.minute.toString().padStart(2, '0')} ${l.label}`,
+      })
+    }
     // Sort by minute so the dial paints the dots in the order an operator
     // would read them clockwise.
     out.sort((a, b) => a.minuteOfHour - b.minuteOfHour)
+    // ─ Fallback: if no layer produced anything, paint the canonical landmarks
+    // (news on the hour + half, travel quarter-past + to). The dial is never
+    // empty so the operator's eye anchors on familiar positions even on a
+    // bare configuration.
     return out.length > 0 ? out : FALLBACK_LANDMARKS
-  }, [rules, hour])
+  }, [rules, hour, currentShow])
   return events
 }
 

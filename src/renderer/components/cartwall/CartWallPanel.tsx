@@ -19,6 +19,17 @@ const CART_SLOT_TYPES: readonly MyriadItemType[] = [
 ] as const
 
 /**
+ * Display order for the "group by type" mode. Same vocabulary as
+ * `CART_SLOT_TYPES` but ordered so the broadcast-critical categories
+ * (music / jingle / sweep / V-T) sit at the top of the panel — matching
+ * how operators scan a Myriad cart wall.
+ */
+const GROUP_ORDER: readonly MyriadItemType[] = [
+  'music', 'jingle', 'sweeper', 'voice-track', 'advert',
+  'sponsor', 'news', 'travel', 'weather', 'other',
+] as const
+
+/**
  * Modal cart wall — 4x4 grid of fire buttons.
  *
  * Layout choice: rendered as a centred overlay with a dim backdrop instead of
@@ -47,6 +58,29 @@ export function CartWallPanel({ onClose }: { onClose: () => void }) {
     [edit, cw.slots],
   )
 
+  // Bucket the slots by their Myriad type for the grouped render. Loaded
+  // slots (ones with audio) get sorted into their type bucket; empty slots
+  // collect into a separate trailing section so the operator can still see
+  // them and click-to-assign without losing them off the bottom of the wall.
+  // We pre-build this even in grid mode — it's only 16 items, the cost is
+  // negligible, and it keeps the branching tidy below.
+  const grouped = useMemo(() => {
+    const buckets = new Map<MyriadItemType, CartSlot[]>()
+    const empties: CartSlot[] = []
+    for (const slot of cw.slots) {
+      if (!cw.ready.has(slot.id)) { empties.push(slot); continue }
+      const list = buckets.get(slot.type)
+      if (list) list.push(slot)
+      else buckets.set(slot.type, [slot])
+    }
+    const sections: { type: MyriadItemType; slots: CartSlot[] }[] = []
+    for (const t of GROUP_ORDER) {
+      const list = buckets.get(t)
+      if (list && list.length > 0) sections.push({ type: t, slots: list })
+    }
+    return { sections, empties }
+  }, [cw.slots, cw.ready])
+
   return (
     <div
       className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-sm"
@@ -67,29 +101,93 @@ export function CartWallPanel({ onClose }: { onClose: () => void }) {
             <h2 className="font-semibold tracking-wide text-white">Cart Wall</h2>
             <span className="text-xs uppercase tracking-widest text-slate-500">Sting Deck</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-surface-700 hover:text-white"
-            aria-label="Close cart wall"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {/* View-mode toggle. Two equal-width pills so the active state is
+                obvious at a glance — the operator's eye doesn't have to chase
+                a tiny checkbox during a live show. */}
+            <div
+              className="flex overflow-hidden rounded-md border border-surface-600"
+              role="group"
+              aria-label="Cart wall view mode"
+            >
+              <button
+                type="button"
+                onClick={() => cw.setGroupByType(false)}
+                aria-pressed={!cw.groupByType}
+                className={[
+                  'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest transition-colors',
+                  !cw.groupByType
+                    ? 'bg-nar-blue text-white'
+                    : 'bg-surface-800 text-slate-400 hover:text-white',
+                ].join(' ')}
+              >
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => cw.setGroupByType(true)}
+                aria-pressed={cw.groupByType}
+                className={[
+                  'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-widest transition-colors',
+                  cw.groupByType
+                    ? 'bg-nar-blue text-white'
+                    : 'bg-surface-800 text-slate-400 hover:text-white',
+                ].join(' ')}
+              >
+                Group
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-surface-700 hover:text-white"
+              aria-label="Close cart wall"
+            >
+              Close
+            </button>
+          </div>
         </header>
 
-        <div className="grid grid-cols-4 gap-3 p-5">
-          {cw.slots.map(slot => (
-            <CartButton
-              key={slot.id}
-              slot={slot}
-              ready={cw.ready.has(slot.id)}
-              flashing={cw.flashing.has(slot.id)}
-              onFire={() => cw.fire(slot.id)}
-              onAssign={file => cw.assign(slot.id, file)}
-              onEdit={(x, y) => setEdit({ id: slot.id, x, y })}
-            />
-          ))}
-        </div>
+        {cw.groupByType ? (
+          <div className="flex flex-col gap-4 p-5">
+            {grouped.sections.map(section => (
+              <CartSection
+                key={section.type}
+                type={section.type}
+                slots={section.slots}
+                ready={cw.ready}
+                flashing={cw.flashing}
+                onFire={id => cw.fire(id)}
+                onAssign={(id, file) => cw.assign(id, file)}
+                onEdit={(id, x, y) => setEdit({ id, x, y })}
+              />
+            ))}
+            {grouped.empties.length > 0 && (
+              <EmptySection
+                slots={grouped.empties}
+                ready={cw.ready}
+                flashing={cw.flashing}
+                onFire={id => cw.fire(id)}
+                onAssign={(id, file) => cw.assign(id, file)}
+                onEdit={(id, x, y) => setEdit({ id, x, y })}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-3 p-5">
+            {cw.slots.map(slot => (
+              <CartButton
+                key={slot.id}
+                slot={slot}
+                ready={cw.ready.has(slot.id)}
+                flashing={cw.flashing.has(slot.id)}
+                onFire={() => cw.fire(slot.id)}
+                onAssign={file => cw.assign(slot.id, file)}
+                onEdit={(x, y) => setEdit({ id: slot.id, x, y })}
+              />
+            ))}
+          </div>
+        )}
 
         <footer className="border-t border-surface-700 px-5 py-2 text-xs text-slate-500">
           Right-click a cart to edit. Drag-drop audio onto a slot to load. Hotkeys fire when no input is focused.
@@ -105,6 +203,109 @@ export function CartWallPanel({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </div>
+  )
+}
+
+interface CartSectionProps {
+  type: MyriadItemType
+  slots: CartSlot[]
+  ready: ReadonlySet<string>
+  flashing: ReadonlySet<string>
+  onFire: (id: string) => void
+  onAssign: (id: string, file: File) => void
+  onEdit: (id: string, clientX: number, clientY: number) => void
+}
+
+/**
+ * One category section in grouped mode: a coloured rule + label + count
+ * header, then the type's loaded slots in the same 4-column grid the panel
+ * uses everywhere else. The rule colour is `MYRIAD_COLORS[type].hex` so the
+ * section header carries the same visual signature as the tiles below it —
+ * an operator scanning the panel matches "orange rule" to "orange tiles"
+ * without reading the label.
+ */
+function CartSection({ type, slots, ready, flashing, onFire, onAssign, onEdit }: CartSectionProps) {
+  const style = MYRIAD_COLORS[type]
+  return (
+    <section aria-label={MYRIAD_LABELS[type]}>
+      <div className="mb-2">
+        <div
+          aria-hidden
+          className="h-1.5 w-full rounded-sm"
+          style={{ background: style.hex, boxShadow: `0 0 10px ${style.hex}66` }}
+        />
+        <div className="mt-1.5 flex items-baseline justify-between">
+          <span
+            className="text-[11px] font-bold uppercase tracking-widest"
+            style={{ color: style.hex }}
+          >
+            {MYRIAD_LABELS[type]}
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-slate-500">
+            {slots.length} {slots.length === 1 ? 'cart' : 'carts'}
+          </span>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        {slots.map(slot => (
+          <CartButton
+            key={slot.id}
+            slot={slot}
+            ready={ready.has(slot.id)}
+            flashing={flashing.has(slot.id)}
+            onFire={() => onFire(slot.id)}
+            onAssign={file => onAssign(slot.id, file)}
+            onEdit={(x, y) => onEdit(slot.id, x, y)}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+interface EmptySectionProps {
+  slots: CartSlot[]
+  ready: ReadonlySet<string>
+  flashing: ReadonlySet<string>
+  onFire: (id: string) => void
+  onAssign: (id: string, file: File) => void
+  onEdit: (id: string, clientX: number, clientY: number) => void
+}
+
+/**
+ * Trailing section for slots with no audio loaded. Neutral slate styling
+ * (no type colour) so it visually defers to the loaded categories above —
+ * but still rendered so the operator can drag-drop or click to assign
+ * without flipping back to grid mode.
+ */
+function EmptySection({ slots, ready, flashing, onFire, onAssign, onEdit }: EmptySectionProps) {
+  return (
+    <section aria-label="Empty slots">
+      <div className="mb-2">
+        <div aria-hidden className="h-1.5 w-full rounded-sm bg-surface-700" />
+        <div className="mt-1.5 flex items-baseline justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+            Empty
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-slate-600">
+            {slots.length} {slots.length === 1 ? 'slot' : 'slots'}
+          </span>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        {slots.map(slot => (
+          <CartButton
+            key={slot.id}
+            slot={slot}
+            ready={ready.has(slot.id)}
+            flashing={flashing.has(slot.id)}
+            onFire={() => onFire(slot.id)}
+            onAssign={file => onAssign(slot.id, file)}
+            onEdit={(x, y) => onEdit(slot.id, x, y)}
+          />
+        ))}
+      </div>
+    </section>
   )
 }
 

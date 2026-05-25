@@ -4,7 +4,9 @@ import { VIZ_MODES, VIZ_PALETTES } from '../../viz/VizProvider'
 import { TITLE_TEMPLATES } from '../../cg/CGProvider'
 import { useMyriadBridge } from '../../myriad/MyriadBridgeProvider'
 import { useMyriadBinderEnabled } from '../../myriad/MyriadActionBinder'
-import type { NarShow } from '../../shows/types'
+import { MYRIAD_COLORS, MYRIAD_LABELS, type MyriadItemType } from '../common/itemTypeColors'
+import { HourClock } from '../common/HourClock'
+import type { NarShow, HourLandmark } from '../../shows/types'
 import type { LayoutType } from '../../engine/types'
 
 /**
@@ -322,6 +324,16 @@ function ShowEditor({ show, onClose }: { show: NarShow; onClose: () => void }) {
           )}
         </fieldset>
 
+        {/* Per-show HourClock landmarks — paints dots on the schedule banner's
+            dial when this show is on-air. Operators with established hour
+            shapes (Drive Time = :00 news / :15 travel / :30 news / :45 travel,
+            Weekend Breakfast = :00 ident / :20 sport / :40 review) get to
+            see their canonical hour at a glance. */}
+        <HourLandmarksEditor
+          landmarks={draft.hourLandmarks ?? []}
+          onChange={(next) => update({ hourLandmarks: next })}
+        />
+
         <label className="block">
           <span className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Producer notes</span>
           <textarea
@@ -605,5 +617,114 @@ function MyriadBridgeSection() {
         </div>
       </div>
     </details>
+  )
+}
+
+/**
+ * HourClock landmark editor — operator builds a list of {minute, label, type}
+ * entries that paint dots on the dial whenever this show is on-air. Renders
+ * a live preview of the dial alongside the list so the operator sees their
+ * edits without leaving the editor.
+ */
+const LANDMARK_TYPES: MyriadItemType[] = [
+  'news', 'travel', 'weather', 'sponsor', 'show', 'voice-track', 'music', 'jingle', 'sweeper', 'other',
+]
+
+function HourLandmarksEditor({ landmarks, onChange }: {
+  landmarks: HourLandmark[]
+  onChange: (next: HourLandmark[]) => void
+}) {
+  const [newMinute, setNewMinute] = useState(0)
+  const [newLabel, setNewLabel] = useState('News')
+  const [newType, setNewType] = useState<MyriadItemType>('news')
+
+  const add = () => {
+    const minute = Math.max(0, Math.min(59, Math.round(newMinute) || 0))
+    const label = newLabel.trim() || MYRIAD_LABELS[newType]
+    const id = `lm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    onChange([...landmarks, { id, minute, label, type: newType }].sort((a, b) => a.minute - b.minute))
+    setNewLabel('')
+  }
+  const remove = (id: string) => onChange(landmarks.filter(l => l.id !== id))
+
+  const previewEvents = landmarks.map(l => ({
+    minuteOfHour: l.minute,
+    color: MYRIAD_COLORS[l.type].hex,
+    label: l.label,
+  }))
+
+  return (
+    <fieldset className="border border-surface-800 rounded p-2">
+      <legend className="text-[10px] text-slate-500 uppercase tracking-wider px-1">Hour shape · clock landmarks</legend>
+      <div className="flex items-start gap-3 mt-1">
+        {/* Live preview dial */}
+        <div className="shrink-0">
+          <HourClock size={70} events={previewEvents} showSecondHand={false} />
+        </div>
+        {/* List + add row */}
+        <div className="flex-1 flex flex-col gap-1 min-w-0">
+          {landmarks.length === 0 ? (
+            <div className="text-[10px] text-slate-600 leading-snug">
+              No landmarks. Add :00 News, :15 Travel etc to give this show its own canonical hour shape.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {[...landmarks].sort((a, b) => a.minute - b.minute).map(l => (
+                <div key={l.id} className="flex items-center gap-1.5 bg-surface-800/60 rounded px-1.5 py-0.5">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ background: MYRIAD_COLORS[l.type].hex }}
+                  />
+                  <span className="text-[10px] font-mono tabular-nums text-slate-300 w-7 shrink-0">
+                    :{l.minute.toString().padStart(2, '0')}
+                  </span>
+                  <span className={`text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded ${MYRIAD_COLORS[l.type].bgFaded} ${MYRIAD_COLORS[l.type].textOnFaded} shrink-0`}>
+                    {MYRIAD_LABELS[l.type]}
+                  </span>
+                  <span className="text-[11px] text-slate-300 truncate flex-1">{l.label}</span>
+                  <button
+                    onClick={() => remove(l.id)}
+                    className="text-[10px] text-slate-500 hover:text-nar-red px-1 shrink-0"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Add row */}
+          <div className="flex items-center gap-1 mt-1">
+            <input
+              type="number" min={0} max={59} value={newMinute}
+              onChange={e => setNewMinute(Number(e.target.value))}
+              className="w-12 bg-surface-800 border border-surface-700 rounded px-1 py-0.5 text-[11px] font-mono text-white tabular-nums outline-none focus:border-nar-blue/60"
+              placeholder=":mm"
+            />
+            <select
+              value={newType}
+              onChange={e => setNewType(e.target.value as MyriadItemType)}
+              className="bg-surface-800 border border-surface-700 rounded px-1 py-0.5 text-[10px] text-white outline-none focus:border-nar-blue/60"
+            >
+              {LANDMARK_TYPES.map(t => (
+                <option key={t} value={t}>{MYRIAD_LABELS[t]}</option>
+              ))}
+            </select>
+            <input
+              type="text" value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              placeholder="Label"
+              className="flex-1 bg-surface-800 border border-surface-700 rounded px-2 py-0.5 text-[11px] text-white outline-none focus:border-nar-blue/60"
+            />
+            <button
+              onClick={add}
+              disabled={newMinute < 0 || newMinute > 59}
+              className="text-[10px] py-0.5 px-2 rounded bg-nar-blue text-white font-bold uppercase tracking-wider disabled:bg-surface-800 disabled:text-slate-600"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      </div>
+    </fieldset>
   )
 }

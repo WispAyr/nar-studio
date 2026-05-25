@@ -27,6 +27,28 @@
 import type { TitleTemplate } from '../cg/types'
 import type { LayoutType } from '../engine/types'
 import type { RundownAction } from '../rundown/RundownProvider'
+import type { MyriadItemType } from '../components/common/itemTypeColors'
+
+/**
+ * A landmark painted on the HourClock dial when this show is on-air.
+ *
+ * Each NarShow can carry its own canonical hour shape — Drive Time might
+ * have :00 news, :15 travel, :30 news, :45 travel; Weekend Breakfast
+ * might have :00 ident, :20 sport, :40 review. The dial reads exactly
+ * the operator's actual hour rather than a generic fallback.
+ *
+ * Mirrors a future Myriad "clock template" item — the bridge will
+ * eventually populate landmarks from Myriad's clock data automatically.
+ */
+export interface HourLandmark {
+  id: string
+  /** 0..59 — minute of the hour. */
+  minute: number
+  /** Short label shown on hover (e.g. "News", "Travel", "Sport"). */
+  label: string
+  /** Drives the dot colour via MYRIAD_COLORS[type].hex. */
+  type: MyriadItemType
+}
 
 // ── Show production defaults ─────────────────────────────────────────────────
 
@@ -91,6 +113,11 @@ export interface NarShow {
   // Rundown owned by this show. When the operator selects the show, this
   // becomes the active rundown. Empty = blank rundown.
   rundown?: NarShowRundownRow[]
+
+  // Per-show HourClock landmarks. When set, replace the canonical fallback
+  // dots on the schedule banner's hour dial while this show is current.
+  // Scheduled-fires dots still merge in on top.
+  hourLandmarks?: HourLandmark[]
 
   // Myriad mirror — empty for now; populated when a bridge is wired up.
   /** Myriad Show / Program ID — populated by the bridge sync. */
