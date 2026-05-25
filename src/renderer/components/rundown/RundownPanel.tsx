@@ -4,6 +4,7 @@ import { TITLE_TEMPLATES } from '../../cg/CGProvider'
 import type { TitleTemplate } from '../../cg/types'
 import { VIZ_MODES } from '../../viz/VizProvider'
 import { useCartwall } from '../../cartwall/CartWallProvider'
+import { MYRIAD_COLORS, MYRIAD_LABELS, rundownTypeToMyriad } from '../common/itemTypeColors'
 
 /**
  * Show rundown panel.
@@ -13,17 +14,29 @@ import { useCartwall } from '../../cartwall/CartWallProvider'
  * going to fire at a glance.
  */
 
-const TYPE_BADGE: Record<RundownRowType, { label: string; bg: string; text: string }> = {
-  intro:      { label: 'INTRO',     bg: 'bg-nar-green/25',  text: 'text-nar-green' },
-  music:      { label: 'MUSIC',     bg: 'bg-nar-blue/25',   text: 'text-nar-blue' },
-  talk:       { label: 'TALK',      bg: 'bg-nar-amber/25',  text: 'text-nar-amber' },
-  news:       { label: 'NEWS',      bg: 'bg-nar-red/25',    text: 'text-nar-red' },
-  interview:  { label: 'INTERVIEW', bg: 'bg-violet-500/20', text: 'text-violet-300' },
-  'ad-break': { label: 'AD-BREAK',  bg: 'bg-slate-500/25',  text: 'text-slate-300' },
-  sponsor:    { label: 'SPONSOR',   bg: 'bg-nar-amber/25',  text: 'text-nar-amber' },
-  outro:      { label: 'OUTRO',     bg: 'bg-nar-green/25',  text: 'text-nar-green' },
-  other:      { label: 'OTHER',     bg: 'bg-slate-600/30',  text: 'text-slate-300' },
-}
+/**
+ * Per-row visual identity — derived from the shared Myriad palette so the
+ * rundown reads the same way an operator scans a Myriad log. We keep
+ * `label` as the row-type override (some types like INTRO want a clearer
+ * label than the Myriad fallback) and pull bg/text classes from the
+ * central map.
+ */
+const TYPE_BADGE: Record<RundownRowType, { label: string; hex: string; bgFaded: string; textOnFaded: string }> = (() => {
+  const o = {} as Record<RundownRowType, { label: string; hex: string; bgFaded: string; textOnFaded: string }>
+  const overrides: Partial<Record<RundownRowType, string>> = {
+    intro: 'INTRO', outro: 'OUTRO', talk: 'TALK', 'ad-break': 'AD-BREAK',
+  }
+  ;(['intro', 'music', 'talk', 'news', 'interview', 'ad-break', 'sponsor', 'outro', 'other'] as RundownRowType[]).forEach(t => {
+    const m = rundownTypeToMyriad(t)
+    o[t] = {
+      label: overrides[t] ?? MYRIAD_LABELS[m],
+      hex: MYRIAD_COLORS[m].hex,
+      bgFaded: MYRIAD_COLORS[m].bgFaded,
+      textOnFaded: MYRIAD_COLORS[m].textOnFaded,
+    }
+  })
+  return o
+})()
 
 const ROW_TYPES: RundownRowType[] = [
   'intro', 'music', 'talk', 'news', 'interview', 'ad-break', 'sponsor', 'outro', 'other',
@@ -248,28 +261,37 @@ function Row(props: RowProps) {
     <div
       onClick={props.onClick}
       onDoubleClick={props.onEdit}
-      className={`group relative flex items-stretch gap-2 px-3 py-2 cursor-pointer transition-colors ${
+      className={`group relative flex items-stretch cursor-pointer transition-colors ${
         isCurrent
-          ? 'bg-nar-amber/15 border-l-2 border-nar-red'
+          ? 'bg-surface-800/80'
           : isDone
-            ? 'bg-surface-900 hover:bg-surface-800 opacity-60'
-            : 'bg-surface-900 hover:bg-surface-800 border-l-2 border-transparent'
+            ? 'bg-surface-900 hover:bg-surface-800 opacity-50'
+            : 'bg-surface-900 hover:bg-surface-800'
       }`}
       title={row.notes || row.title}
     >
-      <div className={`text-[10px] font-mono w-5 shrink-0 self-start mt-0.5 tabular-nums ${
-        isCurrent ? 'text-nar-red font-bold' : 'text-slate-600'
-      }`}>
-        {(index + 1).toString().padStart(2, '0')}
-      </div>
+      {/* Myriad-style solid colour block on the left edge — paints the type
+          in a way the operator's eye reads in one glance, no need to parse
+          the badge text. Wider stripe when the row is current. */}
+      <div
+        className="shrink-0 self-stretch transition-all"
+        style={{ width: isCurrent ? 8 : 5, background: badge.hex, opacity: isDone ? 0.4 : 1 }}
+      />
+
+      <div className="flex items-stretch gap-2 px-2 py-2 flex-1 min-w-0">
+        <div className={`text-[10px] font-mono w-5 shrink-0 self-start mt-0.5 tabular-nums ${
+          isCurrent ? 'text-white font-bold' : 'text-slate-600'
+        }`}>
+          {(index + 1).toString().padStart(2, '0')}
+        </div>
 
       <div className="flex flex-col gap-1 flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${badge.bg} ${badge.text} shrink-0`}>
+          <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${badge.bgFaded} ${badge.textOnFaded} shrink-0`}>
             {badge.label}
           </span>
           <span className="text-xs text-slate-200 truncate flex-1">{row.title || <em className="text-slate-600">(untitled)</em>}</span>
-          <span className="text-[10px] font-mono text-slate-500 tabular-nums shrink-0">{fmtTime(row.durationSec)}</span>
+          <span className="text-[11px] font-mono text-slate-400 tabular-nums shrink-0 font-bold">{fmtTime(row.durationSec)}</span>
         </div>
         {row.actions.length > 0 && (
           <div className="flex flex-wrap gap-1">
@@ -341,6 +363,7 @@ function Row(props: RowProps) {
           </button>
         </div>
       </div>
+      </div>{/* close the .flex.items-stretch wrapper that holds order + content + status */}
     </div>
   )
 }

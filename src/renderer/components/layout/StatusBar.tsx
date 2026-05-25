@@ -4,6 +4,33 @@ import { useCameraStreams } from '../../camera/CameraStreamProvider'
 import { useViz } from '../../viz/VizProvider'
 import type { EngineId } from '../../engine/types'
 import { HealthIndicator } from '../../health/HealthIndicator'
+import { HourClock } from '../common/HourClock'
+
+/**
+ * Compact monospace wall clock for the status bar. Mirrors the top-banner
+ * clock so the time is anchored both ends of the workspace — the Myriad
+ * pattern: time is the operator's most-glanced datum, so it lives where
+ * the eye naturally lands.
+ */
+function MiniWallClock() {
+  const [time, setTime] = useState(new Date())
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const hh = time.getHours().toString().padStart(2, '0')
+  const mm = time.getMinutes().toString().padStart(2, '0')
+  const ss = time.getSeconds().toString().padStart(2, '0')
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <HourClock size={18} showCentre={false} showSecondHand={false} />
+      <span className="tabular-nums font-mono text-slate-200">
+        <span className="font-bold">{hh}:{mm}</span>
+        <span className="text-nar-amber font-bold">:{ss}</span>
+      </span>
+    </div>
+  )
+}
 
 function FpsIndicator() {
   const { levelsRef } = useViz()
@@ -92,6 +119,7 @@ export function StatusBar() {
       )}
 
       <div className="flex-1" />
+      <MiniWallClock />
       <FpsIndicator />
       <HealthIndicator />
       <span className="text-slate-700">NAR Studio Director v1.0</span>
